@@ -1,0 +1,142 @@
+Words supported by ForthEC
+
+
+!		( n adr -- )		Store the value n at adr
+!r+		( adr n -- adr )	Store n at adr, increment adr by 4 and push it on the stack
+".		( adr -- )		Print the string pointed to by adr
+'		( -- adr) name		Push the address of a user-defined word
+(		( -- )			Start a comment
+)		( -- )			End a comment
+*		( n1 n2 -- n3)		Multiply n1 by n2
++		( n1 n2 -- n3 )		Add n2 to n1
+-		( n2 n2 -- n3 )		Subtract n2 from n1
+.		( n -- )		Pop the value at the top of the stack and print it
+."		( -- ) string		Immediately print everything up to the next "
+/		( n1 n2 -- n3 )		Divide n1 by n2
+/c		( -- n )		Push the size of a byte (1)
+/f		( -- n )		Push the size of a floating point number (8)
+/n		( -- n )		Push the size of a stack cell (4)
+0<		( n -- f )		Compare n with 0
+0=		( n -- f )		Compare n with 0
+0>		( n -- f )		Compare n with 0
+1+		( n1 -- n2 )		Add one to n1
+1-		( n1 -- n2 )		Subtract one from n1
+2*		( n1 -- n2 )		Multiply n1 by two
+2/		( n2 -- n2 )		Divide n1 by two
+:		( -- ) name		Start a word definition
+;		( -- )			End a word definition
+;@		( n -- )		End a word definition and pop the top of the stack into register eax 
+<		( n1 n2 -- f )		Compare n1 with n2
+<<		( n1 n2 -- n3 )		Shift n1 left n2 times 
+<=		( n1 n2 -- f )		Compare n1 with n2
+<>		( n1 n2 -- f )		Compare n1 with n2
+=		( n1 n2 -- f )		Compare n1 with n2
+>		( n1 n2 -- f )		Compare n1 with n2
+>=		( n1 n2 -- f )		Compare n1 with n2
+>>		( n1 n2 -- n3 )		Shift n1 right n2 times
+@		( adr -- n )		Reads the value from adr and pushes it one the stack
+\		( -- )			Treat the rest of the line as a comment
+a@		( -- n )		Push the accumulator (eax) on the stack
+allot		( n -- )		Allocate n bytes of variable space
+and		( n1 n2 -- n3 )		Bitwise AND of n1 and n2
+begin		( -- )			Start of begin...while...repeat
+bye		( -- )			Abort execution (calls ExitProcess)
+c!		( n adr -- )		Stores the low byte of n at adr
+c@		( adr -- n )		Reads one byte from adr and pushes it on the stack as a zero-extended dword		
+call		( -- ) name		Call an external function (eg. Win32 API functions)
+calli		( adr -- )		Call the address on the stack
+case		( n -- )		Begin a case...endcase
+constant	( n -- ) name		Declare a constant with the value of n
+cr		( -- )			Print the carriage return character
+default		( -- )			The default-case in a case...endcase	
+do		( n1 n2 -- )		Start of do...loop, going from n2 to n1
+drop		( n -- )		Drop the top of the stack
+dup		( n -- n n )		Duplicate the top of the stack
+else		( -- )			The alternative branch of an if...else...then
+emit		( n -- )		Print the top of the stack as a character
+emms		( -- )			Insert EMMS instruction and clear mmx stack
+endcase		( -- )			End of a case...endcase
+endof		( -- )			End of an of...endof
+erase		( adr n -- )		Set n byte at adr to zero
+exit		( -- )			Exit from the current word
+expect		( adr n -- )		Read max n bytes from the keyboard and store it at adr
+f!		( fp adr -- )		Store a floating point number (64-bit)
+f!s		( fp adr -- )		Store a floating point number (32-bit)
+f*		( f1 f2 -- f3 )		Floting point multiplication
+f+		( f1 f2 -- f3 )		Floating point addition
+f-		( f1 f2 -- f3 )		Floating point subtraction
+f<		( f1 f2 -- f )		Floating point compare (less)
+f<>		( f1 f2 -- f )		Floating point compare (not equal)
+f=		( f2 f2 -- f )		Floating point compare (equal)
+f>		( f1 f2 -- f )
+f/		( f1 f2 -- f3 )
+f0=		( fp -- f ) 
+f0<>		( fp -- f )
+f@		( adr -- fp )
+f@s		( adr -- fp )
+false		( -- f )		Push false (0)
+fconstant	( fp -- ) name
+fcos		( f1 -- f2 )		Take the cosine of f1
+fdrop		( fp -- )
+fdup		( fp -- fp fp )
+ffills		( adr n fp -- )
+fill		( adr n1 n2 -- )	Fill n1 bytes at adr with n2
+floor		( fp -- n )		Round fp towards zero and store it on the parameter stack
+fnegate		( f1 -- f2 )		Negate f1
+fpop		( fp -- fp )
+fpops		( fp -- fp )
+fpush		( n1 n2 -- fp )		Store n1 and n2 on the floating point stack without doing any type conversion
+fpushs		( n -- fp )		Store n on the floating point stack without doing any type conversion
+fsin		( f1 -- f2 )		Take the sine of f1
+fswap		( f1 f2 -- f2 f1 )
+fvariable	( -- ) name		Declare a floating point variable	
+i		( -- n )		Push the top element of the loop control stack onto the parameter stack
+if		( f -- )		Start of a if...else...then
+include		( -- ) name		Include a forth file
+j		( -- n )		Push the third element of the loop control stack onto the parameter stack
+loop		( -- )			End of a do...loop
+max		( n1 n2 -- n3 )		n3 is the maximum of n1 and n2
+min		( n1 n2 -- n3 )		n3 is the minimum of n1 and n2
+mod		( n1 n2 -- n3 )		n3 is n1 modulo n2
+negate		( n1 -- n2 )		Negate n1
+newline		( -- )			Print the newline character
+nip		( n1 n2 -- n2 )
+not		( n1 -- n2 )		Bitwise NOT
+notouch		( -- )			Disable compilation
+null		( -- n )		Put NULL (zero) on the stack
+of		( n -- )		Start an of...endof
+off		( adr -- )		Stores false at adr
+on		( adr -- )		Stores true at adr
+or		( n1 n2 -- n3 )		Bitwise OR between n1 and n2
+over		( n1 n2 -- n1 n2 n1)	Duplicate the second element on the stack
+p!		( p adr -- )		Store an mmx register at adr (32-bit)
+p@		( adr -- p )		Read the 32-bit value from adr and put it on the mmx stack
+pc+		( p1 p2 -- p3 )		Add two packed groups of bytes
+pc2pw		( p -- p')		Convert a group of 4 packed bytes to 4 packed words
+pdrop		( p -- )
+pdup		( p -- p p )
+pick		( n -- )		Duplicate the n:th element on the stack (0=first)
+pw*		( p1 p2 -- p3 )
+repeat		( -- )			End of a begin...while...repeat
+rot		( n1 n2 n3 -- n2 n3 n1 )Rotate the top three elements of the parameter stack
+sp0		( -- adr )		Push the stack base
+sp@		( -- adr )		Push the stack pointer
+space		( -- )			Print the space character
+spaces		( n -- )		Print n space characters
+swap		( n1 n2 -- n2 n1 )	Swap the top two elements of the parameter stack
+then		( -- )			End of an if...else...then
+touch		( -- )			Enable compilation (used after a notouch)
+true		( -- f )		Push the value true (-1)
+tuck		( n1 n2 -- n2 n1 n2 )
+until		( f -- )		End of a begin...until
+variable	( -- ) name		Declare an integer variable
+w!		( n adr -- )
+w@		( adr -- n )
+while		( f -- )		
+xor		( n1 n2 -- n3 )
+z"		( -- adr ) string 
+{		( -- ) parameters	Specify parameters for a word (eg.  : foo { param1 param2 })
+}		( -- )	
+
+
+

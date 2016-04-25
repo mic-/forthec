@@ -1,0 +1,48 @@
+include forthec.e
+include compiler-win32.e
+include compiler-dos16.e
+include compiler-arm.e
+include compiler-m68k.e
+include compiler-bfin.e
+--include compiler-mcore.e
+--include compiler-mips.e
+include compiler-sh.e
+
+labelPrefix = "@@"
+CMD = command_line()
+
+integer targPos
+
+targPos = find("-t",CMD)
+
+if targPos<=0 or targPos=length(CMD) then
+	puts(1,"forthec: No input file.\n")
+	puts(1,"Use  forthec -t <target>  for an explanation of the various options.\n")
+	puts(1,"Valid values for <target> are: arm, bfin, dos16, win32, m68k, sh\n")
+
+	puts(1,"\nPress any key..")
+	while get_key() = -1 do end while
+	abort(0)
+end if
+
+if equal(lower(CMD[targPos+1]),"win32") then
+	forthec_win32()
+elsif equal(lower(CMD[targPos+1]),"dos16") then
+	forthec_dos16()
+elsif equal(lower(CMD[targPos+1]),"arm") then
+	forthec_arm()
+elsif equal(lower(CMD[targPos+1]),"m68k") then
+	forthec_m68k()
+--elsif equal(lower(CMD[targPos+1]),"mips") then
+--	forthec_mips()
+elsif equal(lower(CMD[targPos+1]),"bfin") then
+	forthec_bfin()
+--elsif equal(lower(CMD[targPos+1]),"mcore") then
+--	forthec_mcore()
+elsif equal(lower(CMD[targPos+1]),"sh") then
+	forthec_sh()
+else
+	puts(1,"forthec: Bad target: "&CMD[targPos+1]&"\n")
+	puts(1,"\nPress any key..")
+	while get_key() = -1 do end while
+end if	

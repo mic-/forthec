@@ -1,0 +1,12 @@
+1 	constant PFD_DOUBLEBUFFER
+4	constant PFD_DRAW_TO_WINDOW
+16	constant PFD_SUPPORT_GDI
+32	constant PFD_SUPPORT_OPENGL
+0	constant PFD_TYPE_RGBA
+0	constant PFD_MAIN_PLANE
+
+
+7	constant GL_QUADS
+
+16384	constant GL_COLOR_BUFFER_BIT
+
