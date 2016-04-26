@@ -1,51 +1,59 @@
 without warning
 
 include parser.e
+include error.e
 
 
 global constant
 	NL = {13,10},		-- CR, LF
-	MMX_REG = 1,
-	XMM_REG = 2,
+	MMX_REG = 1,		-- x86 SIMD stuff 
+	XMM_REG = 2,		-- ...
+	
+	-- Used for ARM literal matching
 	powersof2 = {#100,#200,#400,#800,#1000,#2000,#4000,#8000,#10000,
 	             #20000,#40000,#80000,#100000,#200000,#400000,#800000,
 	             #1000000,#2000000,#4000000,#5000000,#6000000,#8000000},
+	
+	-- The powers of 2 from 0 to 31
+
 	pow2_32 = {1,2,4,8,#10,#20,#40,#80,#100,#200,#400,#800,#1000,#2000,#4000,#8000,#10000,
 	           #20000,#40000,#80000,#100000,#200000,#400000,#800000,#1000000,#2000000,
 	           #4000000,#8000000,#10000000,#20000000,#40000000,#80000000}
 	           
 
+-- Enumerators used in optimisation patterns
 global constant COND = -2,
          NUMRANGE = -3,
          LESSBITSSET = -4,
          ISPOW2 = -5
          
-         
+
+-- Global variables         
 global integer
-	ifs,
-	cases,
-	loops,
-	calls,
+	ifs,		-- If-counter
+	cases,		-- Case-counter
+	loops,		-- Loop-counter
+	calls,	
 	outfile,
-	usesI,
-	usesConsole,
-	usesCR, usesLF,
+	usesI,		-- Does the current loop use I ?
+	usesConsole,	-- Does the program use the console (x86) ?
+	usesCR, usesLF,	
 	usesLoops,
 	usesFP,
 	usesIP,
-	usesDict,
+	usesDict,	-- Does the program use the dictionary ?
 	usesMiscS,
-	usesCase,
+	usesCase,	-- Does the program use any Cases ?
 	usesPrint,
-	usesDiv,
+	usesDiv,	-- Does the program use divisions ?
 	useRegs,
-	allowInline,
-	inline,
-	strops,
-	ignoreOutput,
+	allowInline,	-- Allow word inlining (1) or not (0)
+	inline,		-- Inline the current word (1) or not (0)
+	strops,		-- String operations flag
+	ignoreOutput,	-- Used to ignore output of unreferenced/inlined words
 	globLit,
-	noMangle,
-	noFold,
+	noMangle,	-- Mangle word names (0) or not (1)
+	noFold,		-- Fold constant expressions (0) or not (1)
 	p1,p2,
 	dllentry,
 	rangeIdx,
@@ -53,43 +61,59 @@ global integer
 	fastfloat
 
 global sequence
-	code,
-	maincode,
-	inlinecode,
-	inlines,
+	code,		-- Contains the generated code of user-defined words
+	maincode,	-- Contains the generated code of the main program
+	inlinecode,	-- Contains the generated code of the current inlined word
+	inlines,	-- Contains the generated code of all inlined words
 	deferred,
-	referred,
-	ifStack,
+	referred,	-- Hold reference counts for user-defined words
+	ifStack,	-- Used for handling stacked If-constructs
 	literals,
 	immliterals,
 	includes,
 	labelPrefix,
 	publics,
 	CMD,
-	pendingWordDef,
-	userWords,
-	variables,
+	pendingWordDef,	-- Hold info about the currently processed word definition
+	userWords,	-- Associative array containing info about user-defined words
+	variables,	-- Associative array containing info about user-defined variables
 	regs,
 	rstack,
 	fastCmp
 
 global integer
-	linesRemoved,
-	constRemoved,
-	optLevel
-
+	linesRemoved,	-- Number of lines removed by the optimiser
+	constRemoved,	-- Number of constants removed
+	optLevel	-- Optimisation level
+	
 global sequence
-	patvars,
+	patvars,	-- Pattern variables (set by the pattern comparator in the optimiser)
 	constlist
 	
 
-global sequence cfgin,morefiles
-global sequence outname,entry,fentry,nofpu
-global integer cfgfile,dll,infpos
-global atom t1,iwramStart,iwramEnd,ewramStart,ewramEnd
+global sequence
+	cfgin,
+	morefiles,
+	outname,
+	entrypoint,
+	fentry,
+	nofpu
+	
+global integer
+	cfgfile,
+	dll,
+	infpos
+	
+global atom
+	t1,
+	iwramStart,
+	iwramEnd,
+	ewramStart,
+	ewramEnd
 
 
 
+-- Initialise common variables
 global procedure forthec_init()
 	code = {}
 	ifStack = {}
@@ -106,12 +130,18 @@ global procedure forthec_init()
 	variables = {{},{}}
 	inlinecode = {}
 	inlines = {}
+	errors = {{},{}}
 	
 	inline = 0
+	allowInline = 1
+	noMangle = 0
+	noFold = 0
+	errorCount = 0
 	ignoreOutput = 0
 end procedure
 
 
+-- Return "name.ext" as {"name","ext"}
 global function cut_filename(sequence fname)
 	integer p
 	
@@ -132,130 +162,7 @@ end function
 
 
 
--- Insert sequence 'what' in sequence 'dest' of lexically ordered sequences
-global function ordered_insert(sequence what,sequence dest)
-	integer lb,ub,middle,res
-
-	if not length(dest) then
-		return {what}
-	end if
-	
-	lb = 0
-	ub = length(dest)-1
-	
-	while 1 do
-		if ub<lb then
-			return dest
-		end if
-
-		middle = floor((lb+ub)/2)
-		
-		res = compare(what,dest[middle+1])
-		if res=0 then
-			return dest
-		elsif res<0 then
-			if middle=0 then
-				exit
-			elsif compare(what,dest[middle])>0 then
-				exit
-			end if
-			ub = middle-1
-		else
-			if middle=length(dest)-1 then
-				if middle=0 then
-					middle=1
-				else
-					middle += 1
-				end if
-				exit
-			elsif compare(what,dest[middle+2])<0 then
-				middle += 1
-				exit
-			end if
-			lb = middle+1
-		end if
-	end while
-	
-	middle += 1
-	if middle=1 then
-		dest = {what}&dest
-	elsif middle>length(dest) then
-		dest = append(dest,what)
-	else
-		dest = dest[1..middle-1] & {what} & dest[middle..length(dest)]
-	end if
-	
-	return dest
-end function
-
-
-
-		
--- Insert sequence 'what' in sequence 'dest' of lexically ordered sequences
-global function assoc_insert(sequence name,object data,sequence dest)
-	integer lb,ub,middle,res
-	sequence names
-	
-	names = dest[1]
-	
-	if not length(names) then
-		return {{name},{data}}
-	end if
-	
-	lb = 0
-	ub = length(names)-1
-	
-	while 1 do
-		if ub<lb then
-			return dest
-		end if
-
-		middle = floor((lb+ub)/2)
-		
-		res = compare(name,names[middle+1])
-		if res=0 then
-			return dest
-		elsif res<0 then
-			if middle=0 then
-				exit
-			elsif compare(name,names[middle])>0 then
-				exit
-			end if
-			ub = middle-1
-		else
-			if middle=length(names)-1 then
-				if middle=0 then
-					middle=1
-				else
-					middle += 1
-				end if
-				exit
-			elsif compare(name,names[middle+2])<0 then
-				middle += 1
-				exit
-			end if
-			lb = middle+1
-		end if
-	end while
-	
-	middle += 1
-	if middle=1 then
-		dest[1] = {name}&names
-		dest[2] = {data}&dest[2]
-	elsif middle>length(names) then
-		dest[1] = append(names,name)
-		dest[2] = append(dest[2],data)
-	else
-		dest[1] = names[1..middle-1] & {name} & names[middle..length(names)]
-		dest[2] = dest[2][1..middle-1] & {data} & dest[2][middle..length(dest[2])]
-	end if
-	
-	return dest
-end function
-
-
-	
-
+-- Mangle label names
 global function make_label(sequence id)
 	sequence s
 
@@ -270,6 +177,7 @@ global function make_label(sequence id)
 	
 	return labelPrefix&"lbl_"&sprintf(s,id)
 end function
+
 
 
 -- Counts set bits
@@ -291,6 +199,7 @@ global function count_bits(atom a)
 end function
 
 
+-- Add a sequence of code to the current output
 global procedure ADD_CODE(sequence instr,integer section)
 	if not ignoreOutput then
 		if length(pendingWordDef) then
@@ -304,6 +213,8 @@ global procedure ADD_CODE(sequence instr,integer section)
 end procedure
 
 
+
+-- Return the length of the current output
 global function get_code_length()
 	if inline then
 		return length(inlinecode)
@@ -315,6 +226,8 @@ global function get_code_length()
 end function
 
 
+
+-- Remove all code from position i1..i2 in the current output
 global procedure REMOVE_CODE(integer i1,integer i2)
 	if not ignoreOutput then
 		if length(pendingWordDef) then
@@ -329,6 +242,8 @@ end procedure
 
 
 
+-- Count the number of references to all IDs (UNKNOWN tokens) in the program
+-- The minimum reference count is 1, since its declaration is counted as well
 global procedure count_refs()
 	integer n
 

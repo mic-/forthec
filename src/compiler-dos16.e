@@ -1,43 +1,8 @@
 -- ForthEC : A Forth compiler
--- /Mic, 2004/2005
+-- /Mic, 2004/2008
 --
--- 2005-04-10
--- * Better support for DLL output target
+-- x86 16-bit code generator
 --
--- 2004-12-15
--- * Added some SIMD constructs.
--- * Optimised the FPU code (limits FPU stack depth to 8 levels).
--- * Added additional loop optimisations.
--- * Fixed some bugs (FPU compares i.a)
---
--- 2004-12-02
--- * Added more optimisation patterns.
--- * Most integer constants are now completly removed and replaced by immediate values.
--- * FPU code optimisations are now aborted after the first pass if no optimisations are
---   found (eg. if no FPU code is used).
---
--- 2004-11-29
--- * Added additional optimisation based on pattern matching.
---
--- 2004-04-18
--- * Added loop and conditional branch optimisation.
---
--- 2004-04-17
--- * Fixed a bug in loop and +loop.
--- * Implemented more words.
---
--- 2004-04-16
--- * Now removes duplicate floating point literals.
--- * Added floating point instruction optimisation.
--- * Split the compiler into modules.
---
--- 2004-04-15
--- * Added a simple code optimiser.
--- * Implemented more words.
---
--- 2004-04-14
--- * Added code to check if the file handle is valid in compile().
--- * Fixed a bug with nested while loops.
 
 
 without warning
@@ -50,6 +15,7 @@ include optimiser-dos16.e
 
 
 
+-- Push a value on the parameter stack
 procedure PUSH_dos16(atom a)
 	if (a>=0 and a<128) then
 		ADD_CODE({sprintf("push byte %d",a)},0)
@@ -59,6 +25,7 @@ procedure PUSH_dos16(atom a)
 end procedure
 
 
+-- Handle comparison operations
 procedure CMPI_dos16(sequence cond,integer p)
 	integer n
 	
@@ -74,6 +41,8 @@ procedure CMPI_dos16(sequence cond,integer p)
 		elsif n=W_LEAVETRUE then
 			fastCmp = "j"&cond
 			ADD_CODE({"pop ax","pop cx","cmp cx,ax"},0)
+		else
+			n = 0
 		end if
 	end if
 	if not n then
@@ -101,7 +70,7 @@ end procedure
 
 
 function compile_dos16()
-	integer n,p,q,continue,lastComp,case,hasDefault,touch,optI,uses_ebp,ebpCodePos,hasLoops
+	integer n,p,q,lastComp,case_,hasDefault,touch,optI,uses_ebp,ebpCodePos,hasLoops
 	sequence s,t,token,wordId,loopStack,params,caseLbl,asm,lsp
 	
 	
@@ -110,7 +79,7 @@ function compile_dos16()
 	end if
 	
 	lastComp = 0
-	case = -1
+	case_ = -1
 	loopStack = {}
 	touch = 1
 	fastCmp = ""
@@ -224,14 +193,19 @@ function compile_dos16()
 					end if
 				elsif tokens[p][1] = W_TOUCH then
 					--puts(1,"TOUCH\n")
+					if length(asm) then
+						ADD_CODE({asm},0)
+						asm = {}
+					end if
 					exit
 				elsif tokens[p][1] = NEWLINE then
 					if length(asm) then
-						if length(pendingWordDef) then
-							code = append(code,asm)
-						else
-							maincode = append(maincode,asm)
-						end if
+						--if length(pendingWordDef) then
+						--	code = append(code,asm)
+						--else
+						--	maincode = append(maincode,asm)
+						--end if
+						ADD_CODE({asm},0)
 						asm = {}
 					end if
 				elsif tokens[p][1] = W_CALL then
@@ -284,6 +258,9 @@ function compile_dos16()
 		-- c:es!
 		elsif tokens[p][1] = W_CESSTORE then
 			ADD_CODE({"pop bx","pop ax","mov [es:bx],al"},0)
+		-- w:es!
+		elsif tokens[p][1] = W_WESSTORE then
+			ADD_CODE({"pop bx","pop ax","mov [es:bx],ax"},0)
 		-- es!
 		elsif tokens[p][1] = W_ESSTORE then
 			ADD_CODE({"pop es"},0)
@@ -325,6 +302,9 @@ function compile_dos16()
 		-- c@
 		elsif tokens[p][1] = W_CFETCH then
 			ADD_CODE({"pop bx","movzx ax,byte [bx]","push ax"},0)
+		-- c:es@
+		elsif tokens[p][1] = W_CESFETCH then
+			ADD_CODE({"pop bx","movzx ax,byte [es:bx]","push ax"},0)
 		-- cs@
 		elsif tokens[p][1] = W_CSFETCH then
 			ADD_CODE({"pop bx","movsx ax,byte [bx]","push ax"},0)
@@ -449,13 +429,13 @@ function compile_dos16()
 						deferred = assoc_insert(tokens[p+1][2],make_label(tokens[p+1][2]),deferred)
 						p += 1
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 					
 		-- :
@@ -478,16 +458,16 @@ function compile_dos16()
 							--ADD_CODE({"add miscstackptr,4","mov bx,miscstackptr","mov [bx-4],bp","mov bp,loopstackptr"},0)
 							--usesMiscS += 1
 						else
-							ERROR("Attempt to define a word within a word",tokens[p+1])
+							ERROR(ERROR_WORD_INSIDE_WORD,tokens[p+1])
 						end if
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		
@@ -516,7 +496,7 @@ function compile_dos16()
 				ebpCodePos = 0
 				hasLoops = 0
 			else
-				ERROR("Use of ; with no corresponding :",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 
 		-- ;@
@@ -541,7 +521,7 @@ function compile_dos16()
 				ebpCodePos = 0
 				hasLoops = 0
 			else
-				ERROR("Use of ;@ with no corresponding :",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 
 		-- '
@@ -678,6 +658,7 @@ function compile_dos16()
 		-- BEGIN
 		elsif tokens[p][1] = W_BEGIN then
 			s = sprintf("@@loop_%04x",loops)
+--	puts(1,s&"*\n")
 			loops += 1
 			loopStack = append(loopStack,s)
 			ADD_CODE({s&":"},0)
@@ -685,10 +666,12 @@ function compile_dos16()
 		-- DO
 		elsif tokens[p][1] = W_DO then
 			s = sprintf("@@loop_%04x",loops)
+--	puts(1,s&"\n")
 			loops += 1
 			loopStack = append(loopStack,s)
 			n = 0
 			hasLoops = 1
+			usesLoops += 1
 			
 			-- Check if the loop variables can be placed in si/di
 			if optLevel>=4 then
@@ -732,6 +715,7 @@ function compile_dos16()
 				ADD_CODE({"mov bx,["&lsp&"]","sub bx,4","inc word [bx+2]","mov cx,[bx]","cmp [bx+2],cx","jne "&loopStack[length(loopStack)]},0)
 			end if
 			ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
+--	puts(1,loopStack[length(loopStack)]&"_end:\n")
 			ADD_CODE({"sub word ["&lsp&"],4"},0)
 			if length(loopStack) = 1 then
 				loopStack = {}
@@ -748,6 +732,7 @@ function compile_dos16()
 				ADD_CODE({"mov bx,["&lsp&"]","pop ax","sub bx,4","add [bx+2],ax","mov cx,[bx]","cmp [bx+4],cx","jne "&loopStack[length(loopStack)]},0)
 			end if
 			ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
+--	puts(1,loopStack[length(loopStack)]&"_end:+\n")
 			ADD_CODE({"sub word ["&lsp&"],4"},0)
 			if length(loopStack) = 1 then
 				loopStack = {}
@@ -768,8 +753,8 @@ function compile_dos16()
 			
 		-- CASE
 		elsif tokens[p][1] = W_CASE then
-			if case=-1 then
-				case = 0
+			if case_=-1 then
+				case_ = 0
 				hasDefault = 0
 				caseLbl = sprintf("@@case_%06x",cases)
 				ADD_CODE({caseLbl&':'},0)
@@ -780,8 +765,8 @@ function compile_dos16()
 		
 		-- OF
 		elsif tokens[p][1] = W_OF then
-			if case>=0 and not hasDefault then
-				ADD_CODE({"pop ax","cmp ax,caseVar","jne "&caseLbl&sprintf("_%04x_false",case)},0)
+			if case_>=0 and not hasDefault then
+				ADD_CODE({"pop ax","cmp ax,caseVar","jne "&caseLbl&sprintf("_%04x_false",case_)},0)
 			elsif hasDefault then
 				ERROR("OF found after DEFAULT",tokens[p])
 			else
@@ -790,19 +775,19 @@ function compile_dos16()
 		
 		-- ENDOF
 		elsif tokens[p][1] = W_ENDOF then
-			if case>=0 then
+			if case_>=0 then
 				ADD_CODE({"jmp "&caseLbl&"_end"},0)
-				ADD_CODE({caseLbl&sprintf("_%04x_false:",case)},0)
-				case += 1
+				ADD_CODE({caseLbl&sprintf("_%04x_false:",case_)},0)
+				case_ += 1
 			else
 				ERROR("ENDOF outside CASE",tokens[p])
 			end if
 		
 		-- ENDCASE
 		elsif tokens[p][1] = W_ENDCASE then
-			if case>=0 then
+			if case_>=0 then
 				ADD_CODE({caseLbl&"_end:"},0)
-				case = -1
+				case_ = -1
 				cases += 1
 			else
 				ERROR("Unmatched ENDCASE",tokens[p])
@@ -810,7 +795,7 @@ function compile_dos16()
 		
 		-- DEFAULT
 		elsif tokens[p][1] = W_DEFAULT then
-			if case>=0 then
+			if case_>=0 then
 				hasDefault = 1
 			else
 				ERROR("DEFAULT outside CASE",tokens[p])
@@ -842,14 +827,14 @@ function compile_dos16()
 						--for i=1 to length(constants[1]) do
 						--	puts(1,constants[1][i]&", ")
 						--end for
-						ERROR("Non-unique identifier",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 						p += 1
 					end if
 				else
-					ERROR("Found constant inside word definition",tokens[p])				
+					ERROR(ERROR_CONST_INSIDE_WORD,tokens[p])				
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		-- FCONSTANT
@@ -866,7 +851,7 @@ function compile_dos16()
 					end if
 					p += 1
 				else
-					ERROR("Non-unique identifier",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 					p += 1
 				end if
 			else
@@ -883,11 +868,11 @@ function compile_dos16()
 					ADD_CODE({"mov ax,[dictptr]","mov ["&s&"],ax","add word [dictptr],2"},0)
 					p += 1
 				else
-					ERROR("Non-unique identifier",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 					p += 1
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		-- FVARIABLE
@@ -900,7 +885,7 @@ function compile_dos16()
 					ADD_CODE({"mov eax,dictptr","mov "&s&",eax","add dictptr,8"},0)
 					p += 1
 				else
-					ERROR("Non-unique identifier",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 					p += 1
 				end if
 			else
@@ -977,14 +962,14 @@ function compile_dos16()
 						end if
 						p += 1
 					else
-						ERROR("Unexpected end of file",tokens[p-1])
+						ERROR(ERROR_EOF,tokens[p-1])
 					end if
 				end while
 				literals = append(literals,{sprintf("lit_%06x",length(literals)),"db \""&s&"$\""})
 				ADD_CODE({"mov dx,"&literals[length(literals)][1],"mov ah,9","int 21h"},0)
 				--ADD_CODE({sprintf("invoke WriteConsole,hOutput,ADDR "&literals[length(literals)][1]&",%d,ADDR lpCharsWritten,NULL",length(s))},0)
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 		
 		-- ".
@@ -1330,6 +1315,12 @@ function compile_dos16()
 			else
 				ADD_CODE({"pop ax","cmp ax,-1","jnz "&loopStack[length(loopStack)]},0)
 				ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
+				if length(loopStack) = 1 then
+					loopStack = {}
+				else
+					loopStack = loopStack[1..length(loopStack)-1]
+				end if
+				
 			end if
 			
 		-- WHILE
@@ -1369,7 +1360,7 @@ function compile_dos16()
 				literals = append(literals,{sprintf("lit_%06x",length(literals)),"db \""&s&"\",0"})
 				ADD_CODE({"push word "&literals[length(literals)][1]},0)
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		-- $"
@@ -1390,13 +1381,13 @@ function compile_dos16()
 						end if
 						p += 1
 					else
-						ERROR("Unexpected end of file",tokens[p-1])
+						ERROR(ERROR_EOF,tokens[p-1])
 					end if
 				end while
 				literals = append(literals,{sprintf("lit_%06x",length(literals)),"db \""&s&"$\""})
 				ADD_CODE({"push word "&literals[length(literals)][1]},0)
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 			
 		elsif tokens[p][1] = UNKNOWN then
@@ -1453,7 +1444,7 @@ function compile_dos16()
 			end if
 			
 			if not n then
-				ERROR("Undefined word",tokens[p])
+				ERROR(ERROR_UNDECLARED,tokens[p])
 			end if
 		else
 			ERROR("Unsupported word",tokens[p])
@@ -1462,8 +1453,17 @@ function compile_dos16()
 		p += 1
 	end while
 	
-	usesLoops += hasLoops
+	--usesLoops += hasLoops
 	usesCase += cases
+
+	if length(pendingWordDef) then
+		ERROR(ERROR_OPEN_WORD,pendingWordDef)
+	end if
+	
+	if length(loopStack) then
+		--? loopStack
+		ERROR(ERROR_OPEN_DO,tokens[p-1])
+	end if
 	
 	return 0
 end function
@@ -1585,10 +1585,26 @@ global procedure forthec_dos16()
 	regs = repeat({0,0,0,0,0,0,0,0},2)
 	rstack = {}
 
-
+	forthec_init()
+	
 	t1 = time()
 	if parse(CMD[length(CMD)-1]) then end if
+
+	if optLevel>0 and not noFold then
+		optimise_token_stream()
+	end if
+	
+	count_refs()
+	
 	if compile_dos16() then end if
+
+	if errorCount then
+		printf(1,"Aborting with %d errors encountered\n",errorCount)
+		puts(1,"Press any key to abort..")
+		while get_key()=-1 do end while
+		abort(0)
+	end if
+	
 	if optLevel>0 then
 		if verbose then
 			puts(1,"Optimising\n")

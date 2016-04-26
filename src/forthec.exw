@@ -3,10 +3,13 @@ include compiler-win32.e
 include compiler-dos16.e
 include compiler-arm.e
 include compiler-m68k.e
+include compiler-z80.e
+include compiler-65816.e
 include compiler-bfin.e
---include compiler-mcore.e
---include compiler-mips.e
+include compiler-mcore.e
+include compiler-mips.e
 include compiler-sh.e
+include compiler-tlcs900h.e
 
 labelPrefix = "@@"
 CMD = command_line()
@@ -33,14 +36,20 @@ elsif equal(lower(CMD[targPos+1]),"arm") then
 	forthec_arm()
 elsif equal(lower(CMD[targPos+1]),"m68k") then
 	forthec_m68k()
---elsif equal(lower(CMD[targPos+1]),"mips") then
---	forthec_mips()
+elsif equal(lower(CMD[targPos+1]),"mips") then
+	forthec_mips()
 elsif equal(lower(CMD[targPos+1]),"bfin") then
 	forthec_bfin()
---elsif equal(lower(CMD[targPos+1]),"mcore") then
---	forthec_mcore()
+elsif equal(lower(CMD[targPos+1]),"mcore") then
+	forthec_mcore()
 elsif equal(lower(CMD[targPos+1]),"sh") then
 	forthec_sh()
+elsif equal(lower(CMD[targPos+1]),"z80") then
+	forthec_z80()
+elsif equal(lower(CMD[targPos+1]),"900h") then
+    forthec_tlcs900h()
+elsif equal(lower(CMD[targPos+1]),"65816") then
+	forthec_65816()
 else
 	puts(1,"forthec: Bad target: "&CMD[targPos+1]&"\n")
 	puts(1,"\nPress any key..")

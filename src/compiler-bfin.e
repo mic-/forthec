@@ -30,6 +30,9 @@ include optimiser-bfin.e
 
 
 
+-- Register allocation is currently handled in the optimiser rather than
+-- the code generator.
+
 sequence stack_regs
 stack_regs = {}
 constant opt_regs = {"r3","r4"}
@@ -52,6 +55,7 @@ end procedure
 
 
 
+-- Push a value on the parameter stack
 procedure PUSH_bfin(object a)
 	if useRegs and alloc_reg_bfin() then
 		ADD_CODE({stack_regs[1]&" = r0;"},0)
@@ -121,27 +125,16 @@ function stackref_bfin(integer i)
 end function
 
 
+-- Handle comparison operations
 procedure CMPI_bfin(sequence cond,integer p)
 	integer n
 	
 	n = 0
 	if p<length(tokens) and optLevel>=4 then
 		n = tokens[p+1][1]
+
+		-- Is the next token IF or WHILE ?
 		if n=W_IF or n=W_WHILE then
-			--fastCmp = "bn"&cond
-			--if equal(fastCmp,"bnne") then
-			--	fastCmp = "beq"
-			--elsif equal(fastCmp,"bneq") then
-			--	fastCmp = "bne"
-			--elsif equal(fastCmp,"bnlt") then
-			--	fastCmp = "bge"
-			--elsif equal(fastCmp,"bnle") then
-			--	fastCmp = "bgt"
-			--elsif equal(fastCmp,"bngt") then
-			--	fastCmp = "ble"
-			--elsif equal(fastCmp,"bnge") then
-			--	fastCmp = "blt"
-			--end if
 			if equal(cond,">") then
 				fastCmp = "cc"
 				cond = "<="
@@ -152,7 +145,8 @@ procedure CMPI_bfin(sequence cond,integer p)
 				fastCmp = "!cc"
 			end if
 			ADD_CODE({"r1 = r0;",POP_bfin("r2"),POP_bfin("r0"),"cc = r2 "&cond&" r1;"},0)
-			--ADD_CODE({"mov r0,r1","mov.l @r10+,r2","mov.l @r10+,r0","cmp/"&cond&" r1,r2"},0)
+
+		-- Is the next token ?LEAVE ?
 		elsif n=W_LEAVETRUE then
 			if equal(cond,">") then
 				fastCmp = "!cc"
@@ -164,9 +158,13 @@ procedure CMPI_bfin(sequence cond,integer p)
 				fastCmp = "cc"
 			end if
 			ADD_CODE({"r1 = r0;",POP_bfin("r2"),POP_bfin("r0"),"cc = r2 "&cond&" r1;"},0)
-			--ADD_CODE({"mov r0,r1","mov.l @r10+,r2","mov.l @r10+,r0","cmp/"&cond&" r1,r2"},0)
+		
+		else
+			n = 0
 		end if
 	end if
+
+	-- The general case
 	if not n then
 		ADD_CODE({"move.l (a2)+,d1","cmp.l d1,d0","s"&cond&" d0","ext.w d0","ext.l d0"},0)
 	end if
@@ -175,8 +173,8 @@ end procedure
 
 
 function compile_bfin()
-	integer n,p,q,r,continue,lastComp,case,hasDefault,touch,optI
-	sequence s,t,token,wordId,loopStack,loopStacks,params,caseLbl,asm,litBackup
+	integer n,p,q,r,lastComp,case_,hasDefault,touch,optI
+	sequence s,t,token,wordId,loopStack,loopStacks,params,caseLbl,asm,litBackup,context
 	
 	
 	if verbose then
@@ -184,7 +182,7 @@ function compile_bfin()
 	end if
 	
 	lastComp = 0
-	case = -1
+	case_ = -1
 	loopStack = {}
 	touch = 1
 	fastCmp = ""
@@ -239,14 +237,19 @@ function compile_bfin()
 						p += 1
 					end if
 				elsif tokens[p][1] = W_TOUCH then
+					if length(asm) then
+						ADD_CODE({asm},0)
+						asm = {}
+					end if
 					exit
 				elsif tokens[p][1] = NEWLINE then
 					if length(asm) then
-						if length(pendingWordDef) then
-							code = append(code,asm)
-						else
-							maincode = append(maincode,asm)
-						end if
+						--if length(pendingWordDef) then
+						--	code = append(code,asm)
+						--else
+						--	maincode = append(maincode,asm)
+						--end if
+						ADD_CODE({asm},0)
 						asm = {}
 					end if
 				elsif tokens[p][1] = W_CALL then
@@ -303,12 +306,13 @@ function compile_bfin()
 --			ADD_CODE({"ldr r1,[r10],#4","str r0,[r1],#4","mov r0,r1"},0)
 
 		-- ON
-		--elsif tokens[p][1] = W_ON then
+		elsif tokens[p][1] = W_ON then
 		--	ADD_CODE({"pop eax","mov dword ptr [eax],-1"},0)
-		
+			ADD_CODE({"r1 = -1;","a5 = r0;","r0 = [p1++];","[a5] = r1;"},0)
+
 		-- OFF
-		--elsif tokens[p][1] = W_OFF then
-		--	ADD_CODE({"pop eax","mov dword ptr [eax],0"},0)
+		elsif tokens[p][1] = W_OFF then
+			ADD_CODE({"r1 = 0;","a5 = r0;","r0 = [p1++];","[a5] = r1;"},0)
 			
 		-- @
 		elsif tokens[p][1] = W_FETCH then
@@ -347,13 +351,11 @@ function compile_bfin()
 		-- /
 		elsif tokens[p][1] = W_DIV then
 			usesDiv = 1
-			ADD_CODE({"mov.l @r10+,r1","bsr __sdiv","nop"},0)
+			--ADD_CODE({"mov.l @r10+,r1","bsr __sdiv","nop"},0)
 			--ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","divs d1,d0","ext.l d0"},0)
 		-- MOD
 		elsif tokens[p][1] = W_MOD then
 			--ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","divs d1,d0","swap d0","ext.l d0"},0)
-		
-
 		-- /MOD
 		elsif tokens[p][1] = W_DIVMOD then
 			--ADD_CODE({"move.l d0,d1","move.l (a2),d0","divs d1,d0","move.l d0,d1","ext.l d0","swap d1","ext.l d1","move.l d1,(a2)"},0)
@@ -395,11 +397,6 @@ function compile_bfin()
 						if (n+1-tokens[p-1][4])=2 then
 							free_reg_bfin()
 						end if
-						--if (n+1-tokens[p-1][4])=4 then
-						--	free_reg_bfin()
-						--	free_reg_bfin()
-						--end if
-						--? n+1-tokens[p-1][4]
 						ADD_CODE({sprintf("r0 <<= %d;",tokens[p-1][2])},0)
 						REMOVE_CODE(tokens[p-1][4],n)
 					else
@@ -422,10 +419,6 @@ function compile_bfin()
 						if (n+1-tokens[p-1][4])=2 then
 							free_reg_bfin()
 						end if
-						--if (n+1-tokens[p-1][4])=4 then
-						--	free_reg_bfin()
-						--	free_reg_bfin()
-						--end if
 						REMOVE_CODE(tokens[p-1][4],n)
 						ADD_CODE({sprintf("r0 >>= %d;",tokens[p-1][2])},0)
 					else
@@ -441,7 +434,6 @@ function compile_bfin()
 		
 		-- BOUNDS
 		elsif tokens[p][1] = W_BOUNDS then
-			--ADD_CODE({"pop ecx","pop eax","lea ecx,[eax+ecx-1]","push ecx","push eax"},0)
 			ERROR("Unimplemented word",tokens[p])
 		
 		-- DEFER
@@ -452,13 +444,13 @@ function compile_bfin()
 						deferred = assoc_insert(tokens[p+1][2],make_label(tokens[p+1][2]),deferred)
 						p += 1
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 					
 		-- :
@@ -533,22 +525,24 @@ function compile_bfin()
 								ADD_CODE({"p2 += -4;","r0 = rets;","[p2] = r0;"},0)
 		
 
-								loopStacks = loopStack
+								--loopStacks = loopStack
+								context = {ifStack,loopStack}
+								ifStack = {}
 								loopStack = {}
 							end if
 							
 							p += 1
 						else
-							ERROR("Attempt to define a word within a word",tokens[p+1])
+							ERROR(ERROR_WORD_INSIDE_WORD,tokens[p+1])
 						end if
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		
@@ -560,7 +554,7 @@ function compile_bfin()
 				n = 0
 				while 1 do
 					if p>length(tokens) then
-						ERROR("Unexpected end of file",tokens[p-1])
+						ERROR(ERROR_EOF,tokens[p-1])
 					elsif tokens[p][1] = UNKNOWN then
 						params = assoc_insert(tokens[p][2],{n},params)
 						n += 4
@@ -582,7 +576,7 @@ function compile_bfin()
 					ADD_CODE({"mov r10,r13","mov r0,r14"},0)
 				end if
 			else
-				ERROR("Use of { outside word definition",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 		
 		-- ;
@@ -605,7 +599,9 @@ function compile_bfin()
 						ERROR(sprintf("%d open do-loop(s) inside "&pendingWordDef[2],
 						              length(loopStack)),tokens[p])
 					end if
-					loopStack = loopStacks
+					ifStack = context[1]
+					loopStack = context[2]
+					context = {}
 				end if
 				inline = 0
 				inlinecode = {}
@@ -613,7 +609,7 @@ function compile_bfin()
 				ignoreOutput = 0
 				
 			else
-				ERROR("Use of ; with no corresponding :",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 
 		-- ;@
@@ -848,8 +844,8 @@ function compile_bfin()
 			
 		-- CASE
 		elsif tokens[p][1] = W_CASE then
-			if case=-1 then
-				case = 0
+			if case_ = -1 then
+				case_ = 0
 				hasDefault = 0
 				caseLbl = sprintf("__case_%06x",cases)
 				ADD_CODE({"r5 = r0;",POP_bfin("r0")},0)
@@ -860,9 +856,9 @@ function compile_bfin()
 		
 		-- OF
 		elsif tokens[p][1] = W_OF then
-			if case>=0 and not hasDefault then
-				--ADD_CODE({"ldr r0,[sp],#4","cmp r0,r8","bne "&caseLbl&sprintf("_%04x_false",case)},0)
-				ADD_CODE({"mov.l @r10+,r0","cmp/eq r8,r0","bf "&caseLbl&sprintf("_%04x_false",case)},0)
+			if case_ >= 0 and not hasDefault then
+				--ADD_CODE({"ldr r0,[sp],#4","cmp r0,r8","bne "&caseLbl&sprintf("_%04x_false",case_)},0)
+				ADD_CODE({"mov.l @r10+,r0","cmp/eq r8,r0","bf "&caseLbl&sprintf("_%04x_false",case_)},0)
 			elsif hasDefault then
 				ERROR("OF found after DEFAULT",tokens[p])
 			else
@@ -871,19 +867,19 @@ function compile_bfin()
 		
 		-- ENDOF
 		elsif tokens[p][1] = W_ENDOF then
-			if case>=0 then
+			if case_ >= 0 then
 				ADD_CODE({"bra "&caseLbl&"_end","nop"},0)
-				ADD_CODE({caseLbl&sprintf("_%04x_false:",case)},0)
-				case += 1
+				ADD_CODE({caseLbl&sprintf("_%04x_false:",case_)},0)
+				case_ += 1
 			else
 				ERROR("ENDOF outside CASE",tokens[p])
 			end if
 		
 		-- ENDCASE
 		elsif tokens[p][1] = W_ENDCASE then
-			if case>=0 then
+			if case_ >= 0 then
 				ADD_CODE({caseLbl&"_end:"},0)
-				case = -1
+				case_ = -1
 				cases += 1
 			else
 				ERROR("Unmatched ENDCASE",tokens[p])
@@ -891,7 +887,7 @@ function compile_bfin()
 		
 		-- DEFAULT
 		elsif tokens[p][1] = W_DEFAULT then
-			if case>=0 then
+			if case_ >= 0 then
 				hasDefault = 1
 			else
 				ERROR("DEFAULT outside CASE",tokens[p])
@@ -905,23 +901,18 @@ function compile_bfin()
 						if tokens[p+2][1]=UNKNOWN and bsearch(tokens[p+2][2],constants[1])=0 then
 							s = sprintf("const_%07x",length(constants[1]))
 							n = length(maincode)
-							--if tokens[p-1][1]=NUMBER then
-							--	constants = assoc_insert(tokens[p+1][2],{s,0,n+1,tokens[p-1][2]},constants)
-							--else
-							--q = add_literal(s)
-							--r = add_literal(tokens[p+2][2])
 							constants = assoc_insert(tokens[p+2][2],{s,0,n+1},constants)
 							ADD_CODE({"mov.l "&literals[r][1]&",r1","mov.l "&literals[q][1]&",r2","mov.l r1,@r2"},0)
 							p += 2
 						else
-							ERROR("Non-unique identifier",tokens[p+2])
+							ERROR(ERROR_REDECLARED,tokens[p+2])
 							p += 2
 						end if
 					else
 						ERROR("Found constant inside word definition",tokens[p])				
 					end if
 				else
-					ERROR("Unexpected end of file",tokens[p])
+					ERROR(ERROR_EOF,tokens[p])
 				end if
 			end if
 			
@@ -942,31 +933,35 @@ function compile_bfin()
 						end if
 						p += 1
 					else
-						ERROR("Non-unique identifier",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 						p += 1
 					end if
 				else
-					ERROR("Found constant inside word definition",tokens[p])				
+					ERROR(ERROR_CONST_INSIDE_WORD,tokens[p])				
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		
 		-- VARIABLE
 		elsif tokens[p][1] = W_VAR then
 			if length(tokens)>p then
-				if tokens[p+1][1]=UNKNOWN and bsearch(tokens[p+1][2],variables[1])=0 then
-					s = sprintf("var_%07x",length(variables[1]))
-					variables = assoc_insert(tokens[p+1][2],{s,4},variables)
-					ADD_CODE({"p5.h = "&s&";","p5.l = "&s&";","[p5] = p0;","p0 += 4;"},0)
-					p += 1
+				if not length(pendingWordDef) then
+					if tokens[p+1][1]=UNKNOWN and bsearch(tokens[p+1][2],variables[1])=0 then
+						s = sprintf("var_%07x",length(variables[1]))
+						variables = assoc_insert(tokens[p+1][2],{s,4},variables)
+						ADD_CODE({"p5.h = "&s&";","p5.l = "&s&";","[p5] = p0;","p0 += 4;"},0)
+						p += 1
+					else
+						ERROR(ERROR_REDECLARED,tokens[p+1])
+						p += 1
+					end if
 				else
-					ERROR("Non-unique identifier",tokens[p+1])
-					p += 1
+					ERROR(ERROR_VAR_INSIDE_WORD,tokens[p])				
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		elsif tokens[p][1] = W_PUBLIC then
@@ -979,7 +974,7 @@ function compile_bfin()
 					p += 1
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 			
 		-- BYE
@@ -1034,22 +1029,14 @@ function compile_bfin()
 			
 		-- NIP
 		elsif tokens[p][1] = W_NIP then
-			--ADD_CODE({"pop eax","pop ebx","push eax"},0)
 			ADD_CODE({"p1 += 4;"},0)
 			
 		-- TUCK
 		elsif tokens[p][1] = W_TUCK then
-		--	ADD_CODE({"pop eax","pop ebx","push eax","push ebx","push eax"},0)
 			ADD_CODE({"r1 = [p1];","p1 += -4;","[p1] = r1;","[p1+4] = r0;"},0)		
 
 		-- OVER
 		elsif tokens[p][1] = W_OVER then
-			--puts(1,"Stack_regs = ")
-			--? stack_regs
-			--? tokens[p]
-			--ADD_CODE({"r1 = "&stackref_bfin(1)&";"},0)
-			--PUSH_bfin(stackref_bfin(1))
-			--ADD_CODE({"r0 = r1;"},0)
 			ADD_CODE({"r1 = [p1];","p1 += -4;","[p1] = r0;","r0 = r1;"},0)
 			
 		-- ELSE
@@ -1138,7 +1125,6 @@ function compile_bfin()
 		-- REPEAT
 		elsif tokens[p][1] = W_REPEAT then
 			if length(loopStack) then
-			--puts(1,"repeat "&loopStack[length(loopStack)]&"\n")
 				ADD_CODE({"jump "&loopStack[length(loopStack)]&";"},0)
 				ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
 				if length(loopStack) = 1 then
@@ -1154,7 +1140,6 @@ function compile_bfin()
 			
 		-- ROT
 		elsif tokens[p][1] = W_ROT then
-		--	ADD_CODE({"pop eax","pop ecx","pop edx","push ecx","push edx","push eax"},0)
 			ADD_CODE({"move.l (a2)+,d1","move.l (a2)+,d2","move.l d1,-(a2)","move.l d0,-(a2)","move.l d2,d0"},0)
 
 		-- SWAP
@@ -1196,7 +1181,6 @@ function compile_bfin()
 			if not length(loopStack) then
 				ERROR("Unmatched UNTIL",tokens[p])
 			else
-				--ADD_CODE({"mov r0,r1","mov.l @r10+,r0","cmp/pz r1","bt "&loopStack[length(loopStack)]},0)
 				ADD_CODE({"cc = r0==-1;",POP_bfin("r0"),"if !cc jump "&loopStack[length(loopStack)]&";"},0)
 				ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
 				if length(loopStack) = 1 then
@@ -1214,7 +1198,6 @@ function compile_bfin()
 				ADD_CODE({"if "&fastCmp&" jump "&loopStack[length(loopStack)]&"_end;"},0)
 				fastCmp = ""
 			else
-				--ADD_CODE({"mov r0,r1","mov.l @r10+,r0","cmp/pz r1","bt "&loopStack[length(loopStack)]&"_end"},0)
 				ADD_CODE({"cc = r0==-1;",POP_bfin("r0"),"if !cc jump "&loopStack[length(loopStack)]&"_end;"},0)
 			end if
 			
@@ -1244,18 +1227,16 @@ function compile_bfin()
 					end if
 				end while
 				literals = append(literals,{sprintf("lit_%06x_%d",{length(literals)+globLit,length(pendingWordDef)}),".asciz \""&s&"\""})
-				--ADD_CODE({"mov.l r0,@-r10","mova "&literals[length(literals)][1]&",r0"},0)
 				ADD_CODE({"p1 += -4;","[p1] = r0;","r0.h = "&literals[length(literals)][1]&";","r0.l = "&literals[length(literals)][1]&";"},0)
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 			
 		elsif tokens[p][1] = UNKNOWN then
+
+			-- Check user-defined words
 			n = bsearch(tokens[p][2],userWords[1])
 			if n then
-				--s = sprintf("__ret_%04x",calls)
-				--calls += 1
-				--ADD_CODE({"lea "&s&",a6","bra "&userWords[2][n],s&":"},0)
 				if userWords[2][n][2] then
 					ADD_CODE(inlines[userWords[2][n][3]],0)
 				else
@@ -1275,7 +1256,9 @@ function compile_bfin()
 					end if
 				end if
 			end if
-			
+
+
+			-- Check variables			
 			if not n then
 				n = bsearch(tokens[p][2],variables[1])
 				if n then
@@ -1285,6 +1268,8 @@ function compile_bfin()
 				end if
 			end if
 			
+
+			-- Check constants
 			if not n then
 				n = bsearch(tokens[p][2],constants[1])
 				if n then
@@ -1306,25 +1291,17 @@ function compile_bfin()
 				end if
 			end if
 
-			--if not n then
-			--	n = bsearch(tokens[p][2],fconstants[1])
-			--	if n then
-			--		ADD_CODE({"fld qword ptr ["&fconstants[2][n]&"]"},0)
-			--		ADD_CODE({"mov eax,fpstackptr","fstp qword ptr [eax]","add fpstackptr,8"},0)
-			--	end if
-			--end if
-		
+			-- Check deferred words		
 			if not n then
 				n = bsearch(tokens[p][2],deferred[1])
 				if n then
-					--s = sprintf("__ret_%04x",calls)
 					calls += 1
 					ADD_CODE({"call "&deferred[2][n]&"; // deferred"},0)
 				end if
 			end if
 			
 			if not n then
-				ERROR("Undefined word",tokens[p])
+				ERROR(ERROR_UNDECLARED,tokens[p])
 			end if
 		else
 			ERROR("Unsupported word",tokens[p])
@@ -1336,11 +1313,11 @@ function compile_bfin()
 	
 
 	if length(pendingWordDef) then
-		ERROR("Open word definition of "&pendingWordDef[2],tokens[p-1])
+		ERROR(ERROR_OPEN_WORD,pendingWordDef)
 	end if
 	
 	if length(loopStack) then
-		ERROR("Open do-loop",tokens[p-1])
+		ERROR(ERROR_OPEN_DO,tokens[p-1])
 	end if
 	
 	return 0
@@ -1376,7 +1353,7 @@ global procedure forthec_bfin()
 	march = ""
 	crt0 = "crt0.o"
 	--gccend = "-EL"
-	entry = "_start"
+	entrypoint = "_start"
 	fentry = "_main"
 	nofpu = ""
 
@@ -1450,7 +1427,7 @@ global procedure forthec_bfin()
 	--	mcpu = ""
 	--end if
 	if find("-entry",CMD) then
-		entry = CMD[find("-entry",CMD)+1]
+		entrypoint = CMD[find("-entry",CMD)+1]
 	end if
 	if find("-fentry",CMD) then
 		fentry = CMD[find("-fentry",CMD)+1]
@@ -1522,8 +1499,6 @@ global procedure forthec_bfin()
 	outname = cut_filename(outname)
 	outname[2] = lower(outname[2])
 
-	outfile = open(outname[1]&".asm","wb")
-
 
 	forthec_init()
 	
@@ -1543,6 +1518,16 @@ global procedure forthec_bfin()
 	count_refs()
 	
 	if compile_bfin() then end if
+
+	if errorCount then
+		printf(1,"Aborting with %d errors encountered\n",errorCount)
+		puts(1,"Press any key to abort..")
+		while get_key()=-1 do end while
+		abort(0)
+	end if
+
+	outfile = open(outname[1]&".asm","wb")
+	
 	if optLevel>0 then
 		if verbose then
 			puts(1,"Optimising\n")
@@ -1550,6 +1535,7 @@ global procedure forthec_bfin()
 		maincode = optimise_bfin(maincode,1)
 		code = optimise_bfin(code,0)
 	end if
+	
 
 
 	puts(outfile,"// Generated by ForthEC"&NL&NL)
@@ -1576,24 +1562,16 @@ global procedure forthec_bfin()
 		end for
 	end for
 
-	--puts(outfile,".data"&NL)
 
 	puts(outfile,".bss"&NL)
 	puts(outfile,".align 2"&NL)
-
 	for i=1 to length(constants[2]) do
 		if constants[2][i][2] or optLevel=0 then
-			----puts(outfile,"\t"&constants[2][i][1]&" dd ?"&NL)
-			--puts(outfile,"\t.global "&constants[2][i][1]&NL)
-			--puts(outfile,"\t.size "&constants[2][i][1]&",4"&NL)
 			puts(outfile,"\t"&constants[2][i][1]&":"&NL)
 			puts(outfile,"\t\t.long 0"&NL)
 		end if
 	end for
 
-	--for i=1 to length(fconstants[2]) do
-		--puts(outfile,"\t"&fconstants[2][i]&" dq ?"&NL)
-	--end for
 
 	for i=1 to length(variables[2]) do
 		--if variables[2][i][2] = 4 then

@@ -916,7 +916,7 @@ function safe_compare(sequence s1,sequence s2)
 end function
 
 
-function compare_patterns(sequence s1,sequence s2)
+function compare_patterns_arm(sequence s1,sequence s2)
 	integer eql,p1,p2,m,n,o
 	sequence s3,s4
 	
@@ -1239,7 +1239,7 @@ function pattern_optimise(sequence subject,sequence patterns,integer maxIteratio
 						if sequence(pat[1][j][1]) then
 							m = 0
 							for k=1 to length(pat[1][j]) do
-								if compare_patterns(subject[p+j-1],pat[1][j][k]) then
+								if compare_patterns_arm(subject[p+j-1],pat[1][j][k]) then
 									m = k
 									exit
 								end if
@@ -1249,7 +1249,7 @@ function pattern_optimise(sequence subject,sequence patterns,integer maxIteratio
 								exit
 							end if
 						else
-							if not compare_patterns(subject[p+j-1],pat[1][j]) then
+							if not compare_patterns_arm(subject[p+j-1],pat[1][j]) then
 								n = 0
 								exit
 							end if
@@ -1316,6 +1316,161 @@ end function
 
 
 
+-- Responsible for removing unnecessary return stack operations
+function optimise_return_stack_arm(sequence subject)
+    integer m,n,p,q
+    integer clean
+
+    p = 1
+    while p<length(subject) do
+        if equal(subject[p],"str r14,[r11,#-4]!") then
+            m = p   -- m is the line where we save the link register on the stack
+            q = p   -- q is the line where we pop the link register off the stack (into the pc)
+            clean = 1
+            while q <= length(subject) do
+                if equal(subject[q], "ldr r15,[r11],#4") then
+                    exit
+                elsif compare_patterns_arm(subject[q],"bl /label/") then
+                    -- The code modifies LR, so it's not safe to optimise away saving and restoring LR
+                    clean = 0
+                    exit
+                end if
+                q += 1
+            end while
+
+            if clean then
+                subject[q] = "mov r15,r14"
+                subject = subject[1..m-1]&subject[m+1..length(subject)]
+                p = q
+                linesRemoved += 1
+            end if
+        end if
+        p += 1
+    end while
+
+    return subject
+end function
+
+
+
+-- Responsible for moving constant assignments out of innermost loops
+function optimise_constant_assignments_arm(sequence subject)
+	integer l,m,n,o,p,q
+	integer clean,times,improvement
+	sequence r,s,t,u
+
+	times = 3
+	while times>0 do
+		improvement = 0
+		p = 1
+		m = 0
+
+		while p<length(subject) do
+			if length(subject[p])>7 then
+				if (equal(subject[p][1..7],"__loop_") and not find('e',subject[p])) then
+					m = p
+
+				elsif equal(subject[p][1..7],"__loop_") and m then    -- Do the label numbers match?
+					t = subject[p]
+					if --(length(subject[p])=21 and equal(subject[p][17..20],subject[m][13..16])) or
+					   equal(subject[p][8..11],subject[m][8..11]) then
+						n = p
+						q = m
+						o = 0
+						clean = 1
+
+						-- Mark all registers as unused
+						r = repeat(-1,length(regs32))  -- Unused / constant / variable
+						u = repeat({},length(r))       -- Offsets
+						t = r                          -- Values
+
+						r[2] = 0
+						r[3] = 0
+						r[4] = 0
+
+						o = 0
+
+						while m<n do
+							if length(subject[m])>6 then
+								patvars = {}
+								--if find(subject[m][length(subject[m])-1..length(subject[m])],regs68k) then
+								--	s = {0,find(subject[m][length(subject[m])-1..length(subject[m])],regs68k)}
+									patvars = {}
+									if compare_patterns_arm(subject[m],"/reg/ = /imm/") and
+									   r[find(patvars[1],regs32)] != -1 then
+									   	l = find(patvars[1],regs32)
+
+										if r[l]=0 then
+											t[l] = patvars[2]&patvars[3]
+											u[l] = {m}
+											r[l] = 1
+										elsif equal(patvars[2]&patvars[3],t) then
+											u[l] &= m
+										else
+											r[l] = -1
+										end if
+									else
+									end if
+								--end if
+								patvars = {}
+								if compare_patterns_arm(subject[m],"bl /label/") then
+									r = repeat(-1,length(r))
+									exit
+								end if
+							end if
+							m += 1
+						end while
+
+						--puts(1,subject[q]&"\n")
+						for i=1 to length(r) do
+							if r[i]=1 then
+								--printf(1,"%s has constant value %s\n",{regs68k[i],t[i]})
+								subject = subject[1..q-1] & {sprintf(regs32[i]&" = ",i-1)&t[i]} & subject[q..length(subject)]
+								q += 1
+								u += 1
+								improvement = 1
+								linesRemoved += length(u[i])-1
+								--? u[i]
+							end if
+						end for
+						for i=1 to length(r) do
+							if r[i]=1 then
+								for j=1 to length(u[i]) do
+									subject = subject[1..u[i][j]-1] & subject[u[i][j]+1..length(subject)]
+									-- Adjust subsequent offsets
+									for k=i+1 to length(r) do
+										if r[k]=1 then
+											for ll=1 to length(u[k]) do
+												if u[k][ll] > u[i][j] then
+													u[k][ll] -= 1
+												end if
+											end for
+										end if
+									end for
+								end for
+							end if
+						end for
+					end if
+					m = 0
+				end if
+				--m = 0
+			end if
+			p += 1
+		end while
+
+		-- Stop when there's nothing more to optimise
+		if not improvement then
+			exit
+		end if
+		times -= 1
+	end while
+
+	return subject
+end function
+
+
+
+
 global function optimise_arm(sequence subject,integer remConst)
 	integer i1,i2,i3,i4,p,q,n,m,o,clean,improvement,times,reachable
 	sequence s,r,t,u,pat
@@ -1342,7 +1497,7 @@ global function optimise_arm(sequence subject,integer remConst)
 			constlist = {}
 			for i=1 to length(subject) do
 				patvars = {}
-				if compare_patterns(subject[i],"ldr r1,/const/") then
+				if compare_patterns_arm(subject[i],"ldr r1,/const/") then
 					if equal(subject[i+1],"str r0,[r1]") then
 						constlist = append(constlist,patvars&{i,1,1})
 					elsif equal(subject[i+1],"str r2,[r1]") then
@@ -1359,7 +1514,7 @@ global function optimise_arm(sequence subject,integer remConst)
 		--		if equal(subject[j],"push "&patvars[1]) then
 		--			subject[j] = "pushdw "&patvars[2]
 		--			constlist[i][4] = 0
-		--		elsif compare_patterns(subject[j][4..length(subject[j])]," /reg32/,$1") then
+		--		elsif compare_patterns_arm(subject[j][4..length(subject[j])]," /reg32/,$1") then
 		--			subject[j] = subject[j][1..find(',',subject[j])-1]&","&patvars[2]
 		--			patvars = patvars[1..2]
 		--			constlist[i][4] = 0
@@ -1374,7 +1529,7 @@ global function optimise_arm(sequence subject,integer remConst)
 		--	end if
 		--	if equal(subject[p],"sub esp,4") then
 		--		patvars = {}
-		--		if compare_patterns(subject[p+1],"mov dword ptr [esp],/imm/") then
+		--		if compare_patterns_arm(subject[p+1],"mov dword ptr [esp],/imm/") then
 		--			subject = subject[1..p-1] & {"pushdw "&patvars[1]} & subject[p+2..length(subject)]
 		--			linesRemoved += 1
 		--		end if
@@ -1388,6 +1543,7 @@ global function optimise_arm(sequence subject,integer remConst)
 		-- Run up to 10 passes
 		subject = pattern_optimise(subject,intpatterns,10)
 
+		subject = optimise_return_stack_arm(subject)
 
 		-- This code tries to put stack variables in registers in innermost loops
 		times = 3

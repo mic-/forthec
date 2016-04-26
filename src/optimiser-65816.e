@@ -1,18 +1,29 @@
--- ForthEC M68k code optimiser 
--- /Mic, 2004/2009
+-- ForthEC 65816 code optimiser 
+-- /Mic, 2012
 
 
 include parser.e
 include forthec.e
 
 
--- M68k data registers registers
+-- 65C816 data registers registers
 constant dregs = {"d0","d1","d2","d3","d4","d5","d6","d7","d8"}
-constant regs68k = {"d0","d1","d2","d3","d4","d5","d6","d7","a0","a1","a2","a3","a4","a5","a6","a7"}
+constant regs65816 = {"d0","d1","d2","d3","d4","d5","d6","d7","a0","a1","a2","a3","a4","a5","a6","a7"}
 
--- M68k condition codes ("nz" is left out because of how these are used in the patterns below)
-constant conds_68k = {"gt","ge","lt","le","eq"}
+-- 65C816 condition codes ("nz" is left out because of how these are used in the patterns below)
+constant conds_65816 = {"gt","ge","lt","le","eq"}
 
+constant overwrites_acc =
+{
+"pla", "lda", "adc", "sbc",
+"asl", "lsr", "rol", "ror",
+"dea", "ina"
+}
+
+constant relies_on_acc_size = overwrites_acc &
+{
+"pha", "sta","cmp"
+}
         
 
 -- Integer instruction patterns to scan for
@@ -36,650 +47,717 @@ constant conds_68k = {"gt","ge","lt","le","eq"}
 --
 --	add [esp],eax
 --
-constant intpatterns_68k = {
+constant intpatterns_65816 = {
 {
 	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	{"and.l d1,d0","eor.l d1,d0","add.l d1,d0"}
-	},
-	{
-	{4,1,5," #$1,d0"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d0",
-	"cmp.l #-1,d1",
-	"bne /label/"
-	},
-	{
-	2,
-	{"cmp.l #-1,d0"},
-	6
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d1,d0",
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d2",
-	"move.l (a2)+,d0",
-	"cmp.l d1,d2",
-	"b/cond/ /label/"
-	},
-	{
-	{"cmp.l #$1,d1"},
-	{"b$2 $3"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	"sub.l d0,d1",
-	"move.l d1,d0"
-	},
-	{
-	{COND,NUMRANGE,1,1,8,1,"subq.l #$1,d0"},
-	{COND,NUMRANGE,1,1,8,0,"sub.l #$1,d0"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"add.l d0,a1",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"add.l #$1,a1"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d1,d0",
-	"move.l (a2)+,d1",
-	"muls d1,d0"
-	},
-	{
-	4
-	}
-},
-{
-	{
-	"move.l (a2),d1",
-	"move.l d0,(a2)",
-	"move.l d1,d0",
-	{"addq.l #/imm/,d0","subq.l #/imm/,d0"},
-	"move.l (a2),d1",
-	"move.l d0,(a2)",
-	"move.l d1,d0"
-	},
-	{
-	{4,1,6," #$1,(a2)"}
-	}
-},
-
-{
-	{
-	"and.l #/imm/,d0",
-	"and.l #/imm/,d0"
-	},
-	{
-	{COND,LESSBITSSET,1,2,0,1,"and.l #$1,d0"},
-	{COND,LESSBITSSET,1,2,0,0,"and.l #$2,d0"}
-	}
-},
-{
-	{
-	"move.l #/imm/,d0",
-	"cmp.l #$1,d0",
-	"beq /label/"
-	},
-	{
-	{"bra $2"}
-	}
-},
-{
-	{
-	"move.l #/imm/,d0",
-	"cmp.l #$1,d0",
-	"bne /label/"
-	},
-	{
-	}
-},
-{
-	{
-	"cmp.l #/imm/,d0",
-	"sne d0",
-	"ext.w d0",
-	"ext.l d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d0",
-	"cmp.l #-1,d1",
-	"bne /label/"
-	},
-	{
-	{"move.l d0,d1"},
-	6,
-	{"cmp.l #$1,d1"},
-	{"beq $2"}
-	}
-},
-{
-	{
-	"cmp.l #/imm/,d0",
-	"seq d0",
-	"ext.w d0",
-	"ext.l d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d0",
-	"cmp.l #-1,d1",
-	"bne /label/"
-	},
-	{
-	{"move.l d0,d1"},
-	6,
-	{"cmp.l #$1,d1"},
-	{"bne $2"}
-	}
-},
-{
-	{
-	"cmp.l #/imm/,d0",
-	"seq d0",
-	"ext.w d0",
-	"ext.l d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d0",
-	"cmp.l #-1,d1",
-	"beq /label/"
-	},
-	{
-	{"move.l d0,d1"},
-	6,
-	{"cmp.l #$1,d1"},
-	{"beq $2"}
-	}
-},
-{
-	{
-	"move.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	"lsl.l d0,d1",
-	"move.l d1,d0"
-	},
-	{
-	{COND,NUMRANGE,1,1,8,1,"move.l (a2)+,d0"},
-	{COND,NUMRANGE,1,1,8,1,"lsl.l #$1,d0"},
-	{COND,NUMRANGE,1,1,8,0,"move.l #$1,d1"},	
-	{COND,NUMRANGE,1,1,8,0,"move.l (a2)+,d0"},	
-	{COND,NUMRANGE,1,1,8,0,"lsl.l d1,d0"}	
-	}
-},
-{
-	{
-	"move.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	"lsr.l d0,d1",
-	"move.l d1,d0"
-	},
-	{
-	{COND,NUMRANGE,1,1,8,1,"move.l (a2)+,d0"},
-	{COND,NUMRANGE,1,1,8,1,"lsr.l #$1,d0"},
-	{COND,NUMRANGE,1,1,8,0,"move.l #$1,d1"},	
-	{COND,NUMRANGE,1,1,8,0,"move.l (a2)+,d0"},	
-	{COND,NUMRANGE,1,1,8,0,"lsr.l d1,d0"}	
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d1",
-	"move.l (a2)+,d0",
-	{"lsl.l d1,d0","lsr.l d1,d0"}
-	},
-	{
-	2,
-	4
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	"or.l d1,d0"
-	},
-	{
-	{"or.l #$1,d0"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.w (a2)+,(a0,d0)",
-	"addq.l #/imm/,a2",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.l #$1,a5"},
-	{"move.w d0,(a5)"},
-	--{"addq.l #$2,a2"},
-	{"move.l (a2)+,d0"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l (a2)+,(a0,d0)",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.l #$1,a5"},
-	{"move.l d0,(a5)"},
-	4
-	}
-},
-{
-	{
-	"cmp.l #0,d0",
-	"seq d0",
-	"ext.w d0",
-	"ext.l d0",
-	"move.l (a2)+,d1",
-	"cmp.l #-1,d1",
-	"beq /label/"
-	},
-	{
-	5,
-	1,
-	7
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l #/imm/,a5",
-	{"move.l d0,(a5)","move.w d0,(a5)"},
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.l #$2,a5"},
-	{4,1,6," #$1,(a5)"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"or.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	"or.l d1,d0"
-	},
-	{
-	{"or.l #%($1|$2),d0"}
-	}
-},
-{
-	{
-	"move.l #/imm/,d0",
-	{"move.b d0,(a1)+","move.w d0,(a1)+","move.l d0,(a1)+"}
-	},
-	{
-	{2,1,6," #$1,(a1)+"}
-	}
-},
-{	
-	{
-	"move.l d0,-(a2)",
-	"move.l #/var/,d0",
-	"move.l (a2)+,(a0,d0)",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.l #$1,a5"},
-	{"move.l d0,(a5)"},
-	4
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d1,d0",
-	"move.w (a2)+,(a0,d0)",
-	"addq.l #2,a2",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.w d0,(a0,d1)"},
-	--4,
-	5
-	}
-},
-{
-	{
-	"move.l #/var/,d0",
-	"move.l (a0,d0),d0"
-	},
-	{
-	{"move.l #$1,a5"},
-	{"move.l (a5),d0"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d6,d0",
-	"lsl.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	"add.l d1,d0"
-	},
-	{
-	{"move.l d6,d1"},
-	{"lsl.l #$1,d1"},
-	{"add.l d1,d0"}
-	}
-},
-{
-	{
-	"move.w (a2)+,(a0,d0)",
-	"addq.l #2,a2"
-	},
-	{
-	{"move.l (a2)+,d1"},
-	{"move.w d1,(a0,d0)"}
-	}
-},
-{
-	{
-	"move.b (a2)+,(a0,d0)",
-	"addq.l #3,a2"
-	},
-	{
-	{"move.l (a2)+,d1"},
-	{"move.b d1,(a0,d0)"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l #/imm/,a5",
-	"move.w #/imm/,(a5)",
-	"move.l #/imm/,a5",
-	"move.w d0,(a5)",
-	"move.l (a2)+,d0"
+	"pea.w /imm/",
+	"ldy #0",
+	"sep #$20",
+	"lda (2,s),y",
+	"rep #$20",
+	"and #255",
+	"sta 2,s"
 	},
 	{
 	3,
-	4,
-	5,
-	{"move.w #$1,(a5)"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	{"move.b #/imm/,(a1)+","move.w #/imm/,(a1)+","move.l #/imm/,(a1)+"},
-	"move.l (a2)+,d0"
-	},
-	{
-	2
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l d7,-(a4)",
-	"move.l d6,-(a4)",
-	"move.l (a2)+,d7",
-	"move.l d0,d6",
-	"move.l (a2)+,d0"
-	},
-	{
+	{"lda.w ^1"},
 	5,
 	6,
-	{"move.l #$2,d6"},
-	{"move.l #$1,d7"}
+	{"pha"}
 	}
 },
 {
 	{
-	"move.l d0,-(a2)",
-	{"move.l (a4),d0"},
-	"move.l (a2)+,d1",
-	{"add.l d1,d0","and.l d1,d0","eor.l d1,d0"}
+	"pea.w 0",
+	"pla",
+	"cmp #$FFFF",
+	"bne /label/"
 	},
 	{
-	{"move.l (a4),d1"},
-	{4,1,5," d1,d0"}
+	{"bra ^1"}
 	}
 },
 {
 	{
-	"move.l d0,-(a2)",
-	{"move.l d6,d0"},
-	"move.l (a2)+,d1",
-	{"add.l d1,d0","and.l d1,d0","eor.l d1,d0"}
+	"pha",
+	"pla"
 	},
 	{
-	{4,1,5," d6,d0"}
 	}
 },
 {
 	{
-	"move.l d0,-(a2)",
-	"move.l #var_0000001,a5",
-	"move.l d0,(a5)",
-	"move.l (a2)+,d0"
+	"lda 2,s",
+	"pha",
+	"sep #$20",
+	"lda.w /imm/",
+	"rep #$20",
+	"and #255",
+	"sta __forthec_zp00",
+	"pla",
+	"cmp __forthec_zp00",
+	{"beq /label/", "bne /label/"}
 	},
 	{
-	2,
+	{"sep #$20"},
+	1,
+	{"cmp.w ^1"},
+	{"rep #$20"},
+	10
+	}
+},
+{
+	{
+	"beq /label/",
+	"bra /label/",
+	"^1:"
+	},
+	{
+	{"bne ^2"},
 	3
 	}
 },
 {
 	{
-	"move.l (a2),d1",
-	"move.l d0,(a2)",
-	"move.l d1,d0",
-	"move.l #/imm/,d1",
-	{"lsl.l d1,d0","lsr.l d1,d0"},
-	"move.l (a2)+,d1"
+	"pea.w /imm/",
+	"pea.w /imm/",
+	"lda 4,s",
+	"ldy #0",
+	"sep #$20",
+	"sta (2,s),y",
+	"rep #$20",
+	"pla",
+	"pla"
 	},
 	{
-	{"move.l d0,d1"},
-	{"move.l #$1,d2"},
-	{"move.l (a2)+,d0"},
-	{5,1,5," d2,d0"}
+	{"sep #$20"},
+	{"lda #^1"},
+	{"sta.w ^2"},
+	{"rep #$20"}
 	}
 },
 {
 	{
-	"move.l (a2)+,d0",
-	"move.l #/imm/,a5",
-	"move.w d0,(a5)",
-	"move.l (a2)+,d0",
-	"move.l #$1,a5",
-	"move.w d0,(a5)"
+	"pea.w /imm/",
+	"lda 4,s",
+	"ldy #0",
+	"sep #$20",
+	"sta (2,s),y",
+	"rep #$20",
+	"pla"
 	},
 	{
-	2,
-	1,
+	{"sep #$20"},
+	{"lda 2,s"},
+	{"sta.w ^1"},
+	{"rep #$20"}
+	}
+},
+{
+	{
+	"pea.w /imm/",
+	"lda 4,s",
+	"ldy #0",
+	"sta (2,s),y",
+	"pla"
+	},
+	{
+	{"lda 2,s"},
+	{"sta.w ^1"}
+	}
+},
+{
+	{
+	"lda 2,s",
+	"sta.w /imm/",
+	"pla"
+	},
+	{
+	3,
+	2
+	}
+},
+{
+	{
+	"lda 2,s",
+	"pha",
+	"sep #$20",
+	"lda 2,s",
+	"sta.w /imm/",
+	"rep #$20",
+	"pla"
+	},
+	{
 	3,
 	4,
+	5,
 	6
 	}
 },
 {
 	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l #/imm/,a5",
-	"move.w #/imm/,(a5)",
-	"move.l #$2,a5",
-	"move.w d0,(a5)",
-	"move.l #$2,a5",
-	"move.l (a2)+,d0"
+	"rep #$20",
+	"pea.w /imm/",
+	"sep #$20",
+	"lda 2,s",
+	"sta.w /imm/",
+	"rep #$20"
 	},
 	{
+	1,
+	{"lda #^1"},
+	{"pha"},
+	3,
+	5,
+	6
+	}
+},
+{
+	{
+	"pea.w /imm/",
+	"pla",
+	"clc",
+	"adc 2,s",
+	"sta 2,s"
+	},
+	{
+	{"lda #^1"},
 	3,
 	4,
-	{"move.w #$1,(a5)"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d2",
-	"move.l (a2)+,d0",
-	"cmp.l d1,d2",
-	"b/cond/ /label/"
-	},
-	{
-	{"cmp.l #$1,d0"},
-	8
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l (a2),d1",
-	"move.l d0,(a2)",
-	"move.l d1,d0"
-	},
-	{
-	{"move.l #$1,-(a2)"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d1,d0",
-	"move.l (a2)+,d1",
-	"move.b d1,(a0,d0)",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.b d0,(a0,d1)"},
 	5
 	}
 },
 {
 	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d0"
+	"sta 2,s",
+	"lda #/imm/",
+	"clc",
+	"adc 2,s",
+	"sta 2,s"
 	},
 	{
-	{"move.l #$1,d1"}
-	}
-},
-{
-	{
-	"move.l (a2),d1",
-	"move.b d0,(a0,d1)",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.l (a2)+,d1"},
-	2,
-	{"move.l d1,d0"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"cmp.l #/imm/,d0",
-	"seq d0",
-	"ext.w d0",
-	"ext.l d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d0",
-	"cmp.l #-1,d1",
-	"beq /label/"
-	},
-	{
-	2,
-	9
-	}
-},
-{
-	{
-	"move.l d1,d0",
-	"move.l d0,d1"
-	},
-	{
+	3,
+	{"adc #^1"},
 	1
 	}
 },
 {
 	{
-	"move.l d1,d0",
-	"move.l (a2)+,d0"
+	"pea.w /imm/",
+	"pla",
+	"sta.w /imm/"
+	},
+	{
+	{"lda #^1"},
+	3
+	}
+},
+{
+	{
+	"pea.w :/var/",
+	"pea.w ^1",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"sta __forthec_zp02",
+	"pla",
+	"sep #$20",
+	"sta [__forthec_zp00]",
+	"rep #$20"
+	},
+	{
+	{"pla"},
+	{"sep #$20"},
+	{"sta.l ^1"},
+	{"rep #$20"}
+	}
+},
+{
+	{
+	"pea.w :/var/",
+	"pea.w ^1",
+	"lda #/imm/",
+	"clc",
+	"adc 2,s",
+	"sta 2,s"
+	},
+	{
+	{"pea.w :(^1+2)"},
+	{"pea.w ^1+2"}
+	}
+},
+{
+	{
+	"pea.w :(/var/+/imm/)",
+	"pea.w ^1+^2",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"sta __forthec_zp02",
+	"pla",
+	"sep #$20",
+	"sta [__forthec_zp00]",
+	"rep #$20"
+	},
+	{
+	{"pla"},
+	{"sep #$20"},
+	{"sta.l ^1+^2"},
+	{"rep #$20"}
+	}
+},
+{
+	{
+	"pea.w :/var/",
+	"pea.w ^1",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"sta __forthec_zp02",
+	"pla",
+	"sta [__forthec_zp00]"
+	},
+	{
+	{"pla"},
+	{"sta.l ^1"}
+	}
+},
+{
+	{
+	"pea.w :/var/",
+	"pea.w ^1",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"sta __forthec_zp02",
+	"sep #$20",
+	"lda [__forthec_zp00]",
+	"rep #$20",
+	"and #255"
+	},
+	{
+	{"lda #0"},
+	{"sep #$20"},
+	{"lda.l ^1"},
+	{"rep #$20"}
+	}
+},
+{
+	{
+	"pha",
+	"lda #/imm/",
+	"clc",
+	"adc 2,s",
+	"sta 2,s"
+	},
+	{
+	3,
+	{"adc #^1"},
+	1
+	}
+},
+{
+	{
+	"pea.w /var/",
+	"lda #/imm/",
+	"clc",
+	"adc 2,s",
+	"sta 2,s"
+	},
+	{
+	{"pea.w ^1+^2"}
+	}
+},
+{
+	{
+	"pea.w /var/+/imm/",
+	"ldy #0",
+	"lda (2,s),y",
+	"sta 2,s"
+	},
+	{
+	{"lda ^1+^2"},
+	{"pha"}
+	}
+},
+{
+	{
+	"pea.w /var/",
+	"ldy #0",
+	"lda (2,s),y",
+	"sta 2,s"
+	},
+	{
+	{"lda ^1"},
+	{"pha"}
+	}
+},
+{
+	{
+	"pea.w /imm/",
+	"pea.w /imm/",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"sta __forthec_zp02",
+	"pla",
+	"sep #$20",
+	"sta [__forthec_zp00]",
+	"rep #$20"
+	},
+	{
+	{"pla"},
+	{"sep #$20"},
+	{"sta.l %(^1*#65536+^2)"},
+	{"rep #$20"}
+	}
+},
+{
+	{
+	"pea.w /imm/",
+	"pea.w /imm/",
+	"phx",
+	"ply",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"sta __forthec_zp02",
+	"pla",
+	"sep #$20",
+	{"lda [__forthec_zp00],y", "sta [__forthec_zp00],y"},
+	"rep #$20"
+	},
+	{
+	9,
+	{"sep #$20"},
+	{11, 1,3, ".l %(^1*#65536+^2),x"},
+	{"rep #$20"}
+	}
+},
+{
+	{
+	"pea.w /imm/",
+	"pea.w /imm/",
+	"phx",
+	"ply",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"sta __forthec_zp02",
+	"sep #$20",
+	{"lda [__forthec_zp00],y", "sta [__forthec_zp00],y"},
+	"rep #$20"
+	},
+	{
+	{"sep #$20"},
+	{10, 1,3, ".l %(^1*#65536+^2),x"},
+	{"rep #$20"}
+	}
+},
+{
+	{
+	"pea.w /imm/",
+	"pea.w /imm/",
+	"lda __forthec_lstackpos",
+	"clc",
+	"adc #4",
+	"sta __forthec_lstackpos",
+	"plx",
+	"pla",
+	"sta __forthec_looplim"
+	},
+	{
+	3,
+	4,
+	5,
+	6,
+	{"ldx #^2"},
+	{"lda #^1"},
+	9
+	}
+},
+{
+	{
+	"pha",
+	"pea.w /imm/",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"cmp __forthec_zp00"
+	},
+	{
+	{"cmp #^1"}
+	}
+},
+{
+	-- fetch immediately followed by a store
+	{
+	"sep #$20",
+	"lda.l /imm/,x",
+	"rep #$20",
+	"and #255",
+	"sep #$20",
+	"sta.l /imm/,x",
+	"rep #$20"
+	},
+	{
+	1,
+	2,
+	6,
+	7
+	}
+},
+{
+	{
+	"phy",
+	{"lda /var/", "lda.l /var/", "lda #/imm/"},
+	"ply"
 	},
 	{
 	2
 	}
 },
 {
+	-- a do-loop starts right after another one ends
 	{
-	"move.l d0,(a2)",
-	"move.l (a2)+,d0"
+	"lda __forthec_lstackpos",
+	"sec",
+	"sbc #4",
+	"sta __forthec_lstackpos",
+	"lda __forthec_lstackpos",
+	"clc",
+	"adc #4",
+	"sta __forthec_lstackpos"
 	},
 	{
-	{"addq.l #4,a2"}
 	}
 },
 {
 	{
-	"and.l #/imm/,d0",
-	"cmp.l #0,d0"
+	"pha",
+	"pea.w /imm/",
+	"ldy #-1",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"cmp __forthec_zp00",
+	"beq +",
+	"ldy #0",
+	"+:",
+	"phy",
+	"pla",
+	"cmp #$FFFF",
+	{"beq /label/", "bne /label/"}
 	},
 	{
-	1
+	{"cmp #^1"},
+	14
 	}
 },
-	
+{
+	{
+	"pea.w /imm/",
+	"pea.w /imm/",
+	"pla",
+	"sta __forthec_zp00",
+	"pla",
+	"sta __forthec_zp02",
+	"sep #$20",
+	"lda [__forthec_zp00]",
+	"rep #$20",
+	"and #255",
+	"sep #$20",
+	"sta.l /imm/",
+	"rep #$20"
+	},
+	{
+	11,
+	{"lda.l %(^1*#65536+^2)"},
+	12,
+	13
+	}
+},
+{
+	{
+	"phx",
+	"ply"
+	},
+	{
+	{"txy"}
+	}
+},
+{
+	{
+	"pha",
+	"txy",
+	"pla"
+	},
+	{
+	2
+	}
+},
 
+--#########################
+{
+	{
+	"push bc",
+	"ld bc,/imm/",
+	"pop hl",
+	"ld a,c",
+	"or l",
+	"ld c,a",
+	"ld a,b",
+	"or h",
+	"ld b,a"
+	},
+	{
+	{"ld a,b"},
+	{"or %(^1/#256)"},
+	{"ld b,a"},
+	{"ld a,c"},
+	{"or %(^1\\#256)"},
+	{"ld c,a"}
+	}
+},
 
 {
 	{
-	"move.l d0,-(a2)",
-	"move.l d0,-(a2)",
-	"moveq.l #/imm/,d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d2",
-	"move.l (a2)+,d0",
-	"cmp.l d1,d2",
-	"b/cond/ /label/"
+	"ld b,/imm/",
+	"ld a,c",
+	"or /imm/",
+	"ld c,a",
+	"ld a,c",
+	"out (/imm/),a",
+	"pop bc"
 	},
 	{
-	{"cmp.l #$1,d0"},
-	8
+	2,
+	3,
+	6,
+	7
+	}
+},
+{
+	{
+	"ld a,b",
+	"and 0",
+	"ld b,a"
+	},
+	{
+	{"ld b,0"}
+	}
+},
+{
+	{
+	"push bc",
+	"ld bc,/imm/",
+	"pop hl",
+	"ld a,b",
+	"and h",
+	"ld b,a",
+	"ld a,c",
+	"and l",
+	"ld c,a"
+	},
+	{
+	{"ld a,b"},
+	{"and %(^1/#256)"},
+	{"ld b,a"},
+	{"ld a,c"},
+	{"and %(^1\\#256)"},
+	{"ld c,a"}
+	}
+},
+
+{
+	{
+	"push bc",
+	"ld bc,8",
+	"ld a,c",
+	"pop bc",
+	"-:",
+	"cp 0",
+	"jr z,+",
+	"srl b",
+	"rr c",
+	"dec a",
+	"jr -"
+	},
+	{
+	{"ld c,b"},
+	{"ld b,0"}
+	}
+},
+{
+	{
+	"push bc",
+	"ld bc,8",
+	"ld a,c",
+	"pop bc",
+	"-:",
+	"cp 0",
+	"jr z,+",
+	"sla c",
+	"rl b",
+	"dec a",
+	"jr -"
+	},
+	{
+	{"ld b,c"},
+	{"ld c,0"}
+	}
+},
+
+{
+	{
+	"push bc",
+	"ld bc,0",
+	"ld hl,1",
+	"add hl,bc",
+	"pop bc",
+	"jp nz,/label/"
+	},
+	{
+	{"jp ^1"}
+	}
+},
+{
+	{
+	"push bc",
+	"ld bc,/imm/",
+	"ld hl,bc",
+	"pop bc"
+	},
+	{
+	{"ld hl,^1"}
+	}
+},
+{
+	{
+	"push bc",
+	"ld bc,/imm/",
+	"push bc",
+	"ld bc,/imm/",
+	"push de",
+	"ld de,65532",
+	"add iy,de",
+	"pop de",
+	"pop hl",
+	"ld (iy+0),l",
+	"ld (iy+1),h",
+	"ld (iy+2),c",
+	"ld (iy+3),b",
+	"pop bc"
+	},
+	{
+	{"ex de,hl"},
+	{"ld de,65532"},
+	{"add iy,de"},
+	{"ld (iy+0),%(^1\\#256)"},
+	{"ld (iy+1),%(^1/#256)"},
+	{"ld (iy+2),%(^2\\#256)"},
+	{"ld (iy+3),%(^2/#256)"},
+	{"ex de,hl"}
 	}
 },
 
@@ -697,37 +775,17 @@ constant intpatterns_68k = {
 	{"move.l #$1,a5"},
 	{"move.l d1,(a5)"}
 	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d6,d0",
-	"move.l #/var/,a5",
-	"move.l d0,(a5)",
-	"move.l (a2)+,d0"
-	},
-	{
-	3,
-	{"move.l d6,(a5)"}
-	}
 }
+
 }
 
 
 
-constant intpatterns2_68k = {
+constant intpatterns2_65816 = {
 {
 	{
 	"move.l d0,-(a2)",
 	"move.l (a2)+,d0"
-	},
-	{
-	}
-},
-{
-	{
-	"move.l (a2)+,d0",
-	"move.l d0,-(a2)"
 	},
 	{
 	}
@@ -739,16 +797,6 @@ constant intpatterns2_68k = {
 	"move.l d6,-(a4)"
 	},
 	{
-	}
-},
-{
-	{
-	"moveq.l #0,d0",
-	"cmp.l #-1,d0",
-	"bne /label/"
-	},
-	{
-	{"bra $1"}
 	}
 },
 {
@@ -798,7 +846,7 @@ end function
 --end function
 
 
-function is_68kpush(sequence s)
+function is_65816push(sequence s)
 --	integer p
 --
 --	if length(s)>=4 then
@@ -815,7 +863,7 @@ function is_68kpush(sequence s)
 end function
 
 
-function is_68kpop(sequence s)
+function is_65816pop(sequence s)
 --	integer p
 --	
 --	if (length(s)>=4) then
@@ -873,8 +921,8 @@ end function
 
 
 
-function compare_patterns_68k(sequence s1,sequence s2)
-	integer eql,p1,p2,m,n,o
+function compare_patterns_65816(sequence s1,sequence s2)
+	integer eql,p1,p2,m,n,o,matchlabel
 	sequence s3,s4
 	
 	eql = 1
@@ -898,10 +946,18 @@ function compare_patterns_68k(sequence s1,sequence s2)
 			end while
 			p2 += 1
 			
+			if equal(s3, "label") then
+				matchlabel = 1
+			else
+				matchlabel = 0
+			end if
+			
 			s4 = {}
 			while p1<=length(s1) do
 				if s1[p1]=',' or
-				   s1[p1]=']' then
+				   s1[p1]=']' or
+				   (s1[p1]='+' and (length(s4) or not matchlabel)) or	-- allow /label/ to match anonymous forward labels
+				   s1[p1]=')' then
 					exit
 				end if
 				s4 &= s1[p1]
@@ -916,7 +972,7 @@ function compare_patterns_68k(sequence s1,sequence s2)
 					exit
 				end if
 			elsif equal(s3,"reg") then
-				if find(s4,regs68k) then
+				if find(s4,regs65816) then
 					patvars = append(patvars,s4)
 				else
 					eql = 0
@@ -950,6 +1006,11 @@ function compare_patterns_68k(sequence s1,sequence s2)
 						patvars = append(patvars,s4)
 					end if
 				end if
+				--puts(1, "----\n"&s3&" ")
+				--puts(1, s4&"\n")
+				--puts(1, s1 &"\n")
+				--puts(1, s2 &"\n")
+				--printf(1, "%d, %d, %d\n", {p1,p2,eql})
 			--elsif equal(s3,"ind") then
 			--	s4 &= ']'
 			--	eql = 0
@@ -978,10 +1039,12 @@ function compare_patterns_68k(sequence s1,sequence s2)
 				--		o = 1
 				--	end if
 				--end if
+				--puts(1, s4)
 				if o=0 then
 					s3 = value(s4)
 					if s3[1]=GET_SUCCESS and integer(s3[2]) then
 						patvars = append(patvars,s4)
+						--? patvars
 					else
 						eql = 0
 					end if
@@ -992,7 +1055,7 @@ function compare_patterns_68k(sequence s1,sequence s2)
 					--puts(1,"s1[p1] = "&s1[p1]&"\n")
 					s4 = s4[1..find(' ',s4)-1]
 				end if
-				if find(s4,conds_68k) then
+				if find(s4,conds_65816) then
 					patvars = append(patvars,s4)
 					--puts(1,s4&"*\n")
 				else
@@ -1033,7 +1096,7 @@ function compare_patterns_68k(sequence s1,sequence s2)
 			--	end if
 			end if
 			
-		elsif s2[p2]='$' then
+		elsif s2[p2]='^' then
 			n = 0
 			p2 += 1
 			while p2<=length(s2) do
@@ -1049,6 +1112,8 @@ function compare_patterns_68k(sequence s1,sequence s2)
 			s4 = {}
 			while p1<=length(s1) do
 				if s1[p1]=',' or
+				   s1[p1]=')' or
+				   s1[p1]='+' or
 				   s1[p1]=']' then
 				   	if s1[p1]=']' then p1+=1 end if
 					exit
@@ -1098,7 +1163,7 @@ end function
 
 
 
-function pattern_append_68k(sequence s1,sequence s2)
+function pattern_append_65816(sequence s1,sequence s2)
 	integer p2,m,n,oper,expval
 	sequence s3,s4,ops
 
@@ -1109,7 +1174,7 @@ function pattern_append_68k(sequence s1,sequence s2)
 			exit
 		end if
 		
-		if s2[p2]='$' then
+		if s2[p2]='^' then
 			n = 0
 			p2 += 1
 			while p2<=length(s2) do
@@ -1127,7 +1192,7 @@ function pattern_append_68k(sequence s1,sequence s2)
 			ops = {}
 			oper = 0
 			while s2[p2] != ')' do
-				if s2[p2] = '$' or
+				if s2[p2] = '^' or
 				   s2[p2] = '#' then
 				   	m = s2[p2]
 					n = 0
@@ -1140,24 +1205,31 @@ function pattern_append_68k(sequence s1,sequence s2)
 						end if
 						p2 += 1
 					end while
-					if m='$' then
+					if m='^' then
 						s4 = value(patvars[n])
 					else
 						s4 = {GET_SUCCESS,n}
 					end if
 					if oper=0 then
 						expval = s4[2]
+						--? expval
 					elsif oper='+' then
 						expval += s4[2]
+						--? expval
 					elsif oper='-' then
 						expval -= s4[2]
+					elsif oper='/' then
+						expval = floor(expval/s4[2])
+					elsif oper='\\' then
+						expval = remainder(expval,s4[2])
 					elsif oper='*' then
 						expval *= s4[2]
+						--? expval
 					elsif oper='&' then
 						expval = and_bits(expval,s4[2])
 					elsif oper='|' then
 						expval = or_bits(expval,s4[2])
-					elsif oper='^' then
+					elsif oper='?' then
 						expval = xor_bits(expval,s4[2])
 					end if
 
@@ -1165,6 +1237,12 @@ function pattern_append_68k(sequence s1,sequence s2)
 					oper = s2[p2]
 					p2 += 1
 				elsif s2[p2] = '*' then
+					oper = s2[p2]
+					p2 += 1
+				elsif s2[p2] = '/' then
+					oper = s2[p2]
+					p2 += 1
+				elsif s2[p2] = '\\' then
 					oper = s2[p2]
 					p2 += 1
 				elsif s2[p2] = '-' then
@@ -1195,10 +1273,11 @@ end function
 
 
 
-function pattern_optimise_68k(sequence subject,sequence patterns,integer maxIterations)
+function pattern_optimise_65816(sequence subject,sequence patterns,integer maxIterations)
 	integer i1,i2,i3,i4,p,q,n,m,o,clean,improvement,times,reachable,newlen
 	sequence s,r,t,u,pat
 
+	
 	while maxIterations>0 do
 		improvement = linesRemoved
 
@@ -1215,7 +1294,7 @@ function pattern_optimise_68k(sequence subject,sequence patterns,integer maxIter
 						if sequence(pat[1][j][1]) then
 							m = 0
 							for k=1 to length(pat[1][j]) do
-								if compare_patterns_68k(subject[p+j-1],pat[1][j][k]) then
+								if compare_patterns_65816(subject[p+j-1],pat[1][j][k]) then
 									m = k
 									exit
 								end if
@@ -1225,7 +1304,7 @@ function pattern_optimise_68k(sequence subject,sequence patterns,integer maxIter
 								exit
 							end if
 						else
-							if not compare_patterns_68k(subject[p+j-1],pat[1][j]) then
+							if not compare_patterns_65816(subject[p+j-1],pat[1][j]) then
 								n = 0
 								exit
 							end if
@@ -1248,38 +1327,38 @@ function pattern_optimise_68k(sequence subject,sequence patterns,integer maxIter
 							for j=1 to length(pat[2]) do
 								if sequence(pat[2][j]) then
 									if sequence(pat[2][j][1]) then
-										s = pattern_append_68k(s,pat[2][j][1])
+										s = pattern_append_65816(s,pat[2][j][1])
 										newlen += 1
 									else
 										if pat[2][j][1] = COND then
 											if pat[2][j][2] = NUMRANGE then
 												t = value(patvars[pat[2][j][3]])
 												if t[2]>=pat[2][j][4] and t[2]<=pat[2][j][5] and pat[2][j][6] then
-													s = pattern_append_68k(s,pat[2][j][7])
+													s = pattern_append_65816(s,pat[2][j][7])
 													newlen += 1
 												elsif (not (t[2]>=pat[2][j][4] and t[2]<=pat[2][j][5])) and pat[2][j][6]=0 then
-													s = pattern_append_68k(s,pat[2][j][7])
+													s = pattern_append_65816(s,pat[2][j][7])
 													newlen += 1
 												end if
 											elsif pat[2][j][2] = LESSBITSSET then
 												t = value(patvars[pat[2][j][3]])
 												u = value(patvars[pat[2][j][4]])
 												if count_bits(t[2])<count_bits(u[2]) and pat[2][j][6] then
-													s = pattern_append_68k(s,pat[2][j][7])
+													s = pattern_append_65816(s,pat[2][j][7])
 													newlen += 1
 												elsif count_bits(t[2])>=count_bits(u[2]) and pat[2][j][6]=0 then
-													s = pattern_append_68k(s,pat[2][j][7])
+													s = pattern_append_65816(s,pat[2][j][7])
 													newlen += 1
 												end if
 											end if
 
 										else
-											s = pattern_append_68k(s,subject[p+pat[2][j][1]-1][pat[2][j][2]..pat[2][j][3]]&pat[2][j][4])
+											s = pattern_append_65816(s,subject[p+pat[2][j][1]-1][pat[2][j][2]..pat[2][j][3]]&pat[2][j][4])
 											newlen += 1
 										end if
 									end if
 								else
-									s = pattern_append_68k(s,subject[p+pat[2][j]-1])
+									s = pattern_append_65816(s,subject[p+pat[2][j]-1])
 									newlen += 1
 								end if
 							end for
@@ -1308,7 +1387,7 @@ end function
 
 
 
-function optimise_register_usage_68k(sequence subject)
+function optimise_register_usage_65816(sequence subject)
 	integer m,n,o,p,q,d
 	integer loopStart,loopEnd,maxDepth
 	integer clean,times,improvement
@@ -1349,7 +1428,7 @@ function optimise_register_usage_68k(sequence subject)
 							--if find('[',subject[m])>0 then
 							patvars = {}
 							depth &= d
-							if compare_patterns_68k(subject[m],"move.l /dreg/,-(a2)") then
+							if compare_patterns_65816(subject[m],"move.l /dreg/,-(a2)") then
 								--s = value(patvars[1])
 								--if s[2]=-4 then
 									d += 4
@@ -1371,15 +1450,15 @@ function optimise_register_usage_68k(sequence subject)
 								clean = 0
 								exit
 							
-							elsif compare_patterns_68k(subject[m],"lea /label/,a6") then
+							elsif compare_patterns_65816(subject[m],"lea /label/,a6") then
 								clean = 0
 								exit
-							elsif compare_patterns_68k(subject[m],"move.l (a2)+,/dreg/") then
+							elsif compare_patterns_65816(subject[m],"move.l (a2)+,/dreg/") then
 								d -= 4
 								r[find(patvars[length(patvars)],dregs)] = 1
-							elsif compare_patterns_68k(subject[m],"move.l /dreg/,/dreg/") then
+							elsif compare_patterns_65816(subject[m],"move.l /dreg/,/dreg/") then
 								r[find(patvars[length(patvars)],dregs)] = 1
-							elsif compare_patterns_68k(subject[m],"move.l #/imm/,/dreg/") then
+							elsif compare_patterns_65816(subject[m],"move.l #/imm/,/dreg/") then
 								r[find(patvars[length(patvars)],dregs)] = 1
 							end if
 							
@@ -1405,14 +1484,14 @@ function optimise_register_usage_68k(sequence subject)
 							n = 1
 							while m<loopEnd do
 								patvars = {}
-								if compare_patterns_68k(subject[m],"move.l /dreg/,-(a2)") then
+								if compare_patterns_65816(subject[m],"move.l /dreg/,-(a2)") then
 									--s = value(patvars[1])
 									--d -= floor(floor(s[2])/4)
 									--if d > maxDepth then
 									--	maxDepth = d
 									--end if
 									--if s[2] = -4 then
-									--	if compare_patterns_68k(subject[m+1],"[p1];")
+									--	if compare_patterns_z80(subject[m+1],"[p1];")
 									if depth[n]<=length(r) then
 										--subject = subject[1..m-1]&subject[m+1..length(subject)]
 										subject[m] = "move.l "&patvars[length(patvars)]&","&dregs[r[depth[n]]]
@@ -1420,26 +1499,26 @@ function optimise_register_usage_68k(sequence subject)
 										--linesRemoved += 1
 										--p -= 1
 									end if
-								elsif compare_patterns_68k(subject[m],"move.l (a2),/dreg/") then
+								elsif compare_patterns_65816(subject[m],"move.l (a2),/dreg/") then
 									if depth[n]>1 and depth[n]<=length(r)+1 then
 										subject[m] = "move.l "&dregs[r[depth[n]-1]]&","&patvars[length(patvars)]
 									end if
-								elsif compare_patterns_68k(subject[m],"move.l /dreg/,(a2)") then
+								elsif compare_patterns_65816(subject[m],"move.l /dreg/,(a2)") then
 									if depth[n]>1 and depth[n]<=length(r)+1 then
 										subject[m] = "move.l "&patvars[length(patvars)]&","&dregs[r[depth[n]-1]]
 									end if
 								
-								--elsif compare_patterns_68k(subject[m],"/reg/ = [p1 + /imm/];") then
-								--elsif compare_patterns_68k(subject[m],"[p1 + /imm/] = /reg/;") then
-								elsif compare_patterns_68k(subject[m],"move.l (a2)+,/dreg/") then
+								--elsif compare_patterns_z80(subject[m],"/reg/ = [p1 + /imm/];") then
+								--elsif compare_patterns_z80(subject[m],"[p1 + /imm/] = /reg/;") then
+								elsif compare_patterns_65816(subject[m],"move.l (a2)+,/dreg/") then
 									if depth[n]>1 and depth[n]<=length(r)+1 then
 										subject[m] = "move.l "&dregs[r[depth[n]-1]]&","&patvars[length(patvars)]
 									end if
 									--d -= 4
 									--r[find(patvars[length(patvars)],allregs_bfin)] = 1
---								elsif compare_patterns_68k(subject[m],"/reg/ = /reg/;") then
+--								elsif compare_patterns_65816(subject[m],"/reg/ = /reg/;") then
 --									r[find(patvars[length(patvars)-1],allregs_bfin)] = 1
---								elsif compare_patterns_68k(subject[m],"/reg/ = /imm//ext/;") then
+--								elsif compare_patterns_65816(subject[m],"/reg/ = /imm//ext/;") then
 --									r[find(patvars[length(patvars)-2],allregs_bfin)] = 1
 								end if
 
@@ -1472,7 +1551,7 @@ end function
 
 
 
-global function optimise_m68k(sequence subject,integer remConst)
+global function optimise_65816(sequence subject,integer remConst)
 	integer i1,i2,i3,i4,p,q,n,m,o,clean,improvement,times,reachable
 	sequence s,r,t,u,pat
 	integer regsAreFree,isInnermost
@@ -1486,6 +1565,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 	p = 0
 	q = 0
 	improvement = 0
+	
 	
 	if remConst and 0 then
 		-- Remove unused constants
@@ -1508,7 +1588,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 			constlist = {}
 			for i=1 to length(subject) do
 				patvars = {}
-				--if compare_patterns_68k(subject[i],"ldr r1,/const/") then
+				--if compare_patterns_65816(subject[i],"ldr r1,/const/") then
 				--	if equal(subject[i+1],"str r0,[r1]") then
 				--		constlist = append(constlist,patvars&{i,1,1})
 				--	elsif equal(subject[i+1],"str r2,[r1]") then
@@ -1525,7 +1605,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 		--		if equal(subject[j],"push "&patvars[1]) then
 		--			subject[j] = "pushdw "&patvars[2]
 		--			constlist[i][4] = 0
-		--		elsif compare_patterns_68k(subject[j][4..length(subject[j])]," /reg32/,$1") then
+		--		elsif compare_patterns_z80(subject[j][4..length(subject[j])]," /reg32/,$1") then
 		--			subject[j] = subject[j][1..find(',',subject[j])-1]&","&patvars[2]
 		--			patvars = patvars[1..2]
 		--			constlist[i][4] = 0
@@ -1540,7 +1620,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 		--	end if
 		--	if equal(subject[p],"sub esp,4") then
 		--		patvars = {}
-		--		if compare_patterns_68k(subject[p+1],"mov dword ptr [esp],/imm/") then
+		--		if compare_patterns_z80(subject[p+1],"mov dword ptr [esp],/imm/") then
 		--			subject = subject[1..p-1] & {"pushdw "&patvars[1]} & subject[p+2..length(subject)]
 		--			linesRemoved += 1
 		--		end if
@@ -1552,35 +1632,38 @@ global function optimise_m68k(sequence subject,integer remConst)
 	
 	if optLevel >= 5 then
 		-- Run up to 10 passes
-		subject = pattern_optimise_68k(subject,intpatterns_68k,10)
+		subject = pattern_optimise_65816(subject, intpatterns_65816, 10)
 
 
 		-- This code removes unnecessary return stack operations
 		p = 1
 		while p<length(subject) do
-			if equal(subject[p],"move.l a6,-(a3)") then
+			if equal(subject[p],"ldy __forthec_rstackpos ;enter") then
 				m = p
 				q = p
 				clean = 1
 				while q<=length(subject) do
-					if equal(subject[q],"move.l (a3)+,a6") then
+					if equal(subject[q],"ldy __forthec_rstackpos ;exit") then
 						exit
-					elsif compare_patterns_68k(subject[q],"lea /label/,a6") then
+					elsif compare_patterns_65816(subject[q],"jsl /label/") then
+						clean = 0
+						exit
+					elsif compare_patterns_65816(subject[q],"jsr /label/") then
 						clean = 0
 						exit
 					end if
 					q += 1
 				end while
 				if clean then
-					subject = subject[1..m-1]&subject[m+1..q-1]&subject[q+1..length(subject)]
+					subject = subject[1..m-1]&subject[m+11..q-1]&subject[q+11..length(subject)]
 					p = q
-					linesRemoved += 2
+					linesRemoved += 22
 				end if
 			end if
 			p += 1
 		end while
 		
-		subject = optimise_register_usage_68k(subject)
+		subject = optimise_register_usage_65816(subject)
 
 		-- This code tries to move constant assignments out of innermost loops
 		times = 3
@@ -1603,6 +1686,8 @@ global function optimise_m68k(sequence subject,integer remConst)
 							o = 0
 							clean = 1
 
+							puts(1, "Checking loop "&subject[p]&"\n")
+							
 							-- Mark all registers as unused
 							r = repeat(0,16) 	-- Unused / constant / variable
 							u = repeat({},16)	-- Offsets
@@ -1616,10 +1701,10 @@ global function optimise_m68k(sequence subject,integer remConst)
 							while m<n do
 								if length(subject[m])>6 then
 									patvars = {}
-									if find(subject[m][length(subject[m])-1..length(subject[m])],regs68k) then
-										s = {0,find(subject[m][length(subject[m])-1..length(subject[m])],regs68k)}
+									if find(subject[m][length(subject[m])-1..length(subject[m])],regs65816) then
+										s = {0,find(subject[m][length(subject[m])-1..length(subject[m])],regs65816)}
 										patvars = {}
-										if compare_patterns_68k(subject[m],"move.l #/imm/,/reg/") and r[s[2]]!=-1 then
+										if compare_patterns_65816(subject[m],"move.l #/imm/,/reg/") and r[s[2]]!=-1 then
 											if r[s[2]]=0 then
 												t[s[2]] = patvars[1]
 												u[s[2]] = {m}
@@ -1631,7 +1716,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 											end if
 										else
 										patvars = {}
-										if compare_patterns_68k(subject[m],"move.l #/const/,/reg/") and r[s[2]]!=-1 then
+										if compare_patterns_65816(subject[m],"move.l #/const/,/reg/") and r[s[2]]!=-1 then
 											if r[s[2]]=0 then
 												t[s[2]] = patvars[1]
 												u[s[2]] = {m}
@@ -1647,7 +1732,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 										end if
 									end if
 									patvars = {}
-									if compare_patterns_68k(subject[m],"lea /label/,a6") then
+									if compare_patterns_65816(subject[m],"lea /label/,a6") then
 										r = repeat(-1,16)
 										exit
 									end if
@@ -1658,8 +1743,8 @@ global function optimise_m68k(sequence subject,integer remConst)
 							--puts(1,subject[q]&"\n")
 							for i=1 to 16 do
 								if r[i]=1 then
-									--printf(1,"%s has constant value %s\n",{regs68k[i],t[i]})
-									subject = subject[1..q-1] & {"move.l #"&t[i]&","&regs68k[i]} & subject[q..length(subject)]
+									--printf(1,"%s has constant value %s\n",{regs65816[i],t[i]})
+									subject = subject[1..q-1] & {"move.l #"&t[i]&","&regs65816[i]} & subject[q..length(subject)]
 									q += 1
 									u += 1
 									improvement = 1
@@ -1704,7 +1789,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 		end while
 		
 		
-		subject = pattern_optimise_68k(subject,intpatterns2_68k,4)
+		subject = pattern_optimise_65816(subject,intpatterns2_65816,4)
 	end if
 	
 	

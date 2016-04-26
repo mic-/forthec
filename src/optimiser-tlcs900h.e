@@ -1,5 +1,5 @@
--- ForthEC M68k code optimiser 
--- /Mic, 2004/2009
+-- ForthEC TLCS-900/H code optimiser 
+-- /Mic, 2013
 
 
 include parser.e
@@ -11,7 +11,7 @@ constant dregs = {"d0","d1","d2","d3","d4","d5","d6","d7","d8"}
 constant regs68k = {"d0","d1","d2","d3","d4","d5","d6","d7","a0","a1","a2","a3","a4","a5","a6","a7"}
 
 -- M68k condition codes ("nz" is left out because of how these are used in the patterns below)
-constant conds_68k = {"gt","ge","lt","le","eq"}
+constant conds_68k = {"gt","ge","lt","le","z"}
 
         
 
@@ -36,18 +36,400 @@ constant conds_68k = {"gt","ge","lt","le","eq"}
 --
 --	add [esp],eax
 --
-constant intpatterns_68k = {
+constant intpatterns_tlcs900h = {
 {
 	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	{"and.l d1,d0","eor.l d1,d0","add.l d1,d0"}
+	"push xbc",
+	"ld xbc,/imm/",
+	"pop xwa",
+	{"and xbc,xwa","xor xbc,xwa","add xbc,xwa"}
 	},
 	{
-	{4,1,5," #$1,d0"}
+	{4,1,3," xbc,$1"}
 	}
 },
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "pop xwa",
+    "or xbc,xwa"
+    },
+    {
+    {"or xbc,$1"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "pop xwa",
+    "sll xwa,xbc",
+    "ld xbc,xwa"
+    },
+    {
+    {COND,NUMRANGE,1,1,16,1,"sll xbc,$1"},
+    {COND,NUMRANGE,1,1,16,0,"push xbc"},
+    {COND,NUMRANGE,1,1,16,0,"ld xbc,$1"},
+    {COND,NUMRANGE,1,1,16,0,"pop xwa"},
+    {COND,NUMRANGE,1,1,16,0,"sll xwa,xbc"},
+    {COND,NUMRANGE,1,1,16,0,"ld xbc,xwa"}
+    }
+},    
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "pop xwa",
+    "srl xwa,xbc",
+    "ld xbc,xwa"
+    },
+    {
+    {COND,NUMRANGE,1,1,16,1,"srl xbc,$1"},
+    {COND,NUMRANGE,1,1,16,0,"push xbc"},
+    {COND,NUMRANGE,1,1,16,0,"ld xbc,$1"},
+    {COND,NUMRANGE,1,1,16,0,"pop xwa"},
+    {COND,NUMRANGE,1,1,16,0,"srl xwa,xbc"},
+    {COND,NUMRANGE,1,1,16,0,"ld xbc,xwa"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,xwa",
+    {"add xbc,/imm/", "and xbc,/imm/", "xor abx,/imm/", "sll xbc,/imm/", "srl xbc,/imm/"},
+    "pop xwa",
+    "or xbc,xwa"
+    },
+    {
+    {3,1,3," xwa,$1"},
+    {"or xbc,xwa"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,xwa",
+    {"add xbc,/imm/", "and xbc,/imm/", "xor abx,/imm/", "sll xbc,/imm/", "srl xbc,/imm/"},
+    "pop xwa",
+    {"add xbc,xwa", "and xbc,xwa", "xor xbc,xwa"}
+    },
+    {
+    {3,1,3," xwa,$1"},
+    {5,1,3," xbc,xwa"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "pop xwa",
+    "ld (xbc),xwa",
+    "pop xbc"
+    },
+    {
+    {"ld ($1),xbc"},
+    {"pop xbc"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "pop xwa",
+    "ld (xbc),wa",
+    "pop xbc"
+    },
+    {
+    {"ld ($1),bc"},
+    {"pop xbc"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "push xbc",
+    "ld xbc,/imm/",
+    "pop xwa",
+    "ld (xbc),a",
+    "pop xbc"
+    },
+    {
+    {"ldb ($2),$1"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "ld (/imm/),bc",
+    "pop xbc"
+    },
+    {
+    {"ldw ($2),$1"}
+    }
+},
+{
+    {
+    {"lda xbc,/var/", "lda xbc,/const/"},
+    "ld xbc,(xbc)"
+    },
+    {
+    {"ld xbc,($1)"}
+    }
+},
+{
+    {
+    {"lda xwa,/const/"},
+    "ld xbc,(xwa)"
+    },
+    {
+    {"ld xbc,($1)"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "push xbc",
+    "ld xbc,(xsp+4)",
+    "pop xwa",
+    "ld (xbc),wa",
+    "pop xbc"
+    },
+    {
+    {"ldw (xbc),$1"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "push xbc",
+    "ld xbc,(xsp+4)",
+    "pop xwa",
+    "ld (xbc),a",
+    "pop xbc"
+    },
+    {
+    {"ldb (xbc),$1"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "pop xwa",
+    "sub xwa,xbc",
+    "ld xbc,xwa"
+    },
+    {
+    {"sub xbc,$1"}
+    }
+},
+{
+    {
+    "push xbc",
+    "ld xbc,/imm/",
+    "pop xwa",
+    "cp xwa,xbc",
+    "pop xbc"
+    },
+    {
+    {"cp xbc,$1"},
+    {"pop xbc"}
+    }
+},
+{
+    {
+    "push xbc",
+    "lda xbc,/var/",
+    "pop xwa",
+    "ld (xbc),xwa",
+    "pop xbc"
+    },
+    {
+    {"ld ($1),xbc"},
+    {"pop xbc"}
+    }
+},
+{
+    -- "true while" comparison removal
+    {
+    "push xbc",
+    "ld xbc,-1",
+    "cp xbc,-1",
+    "pop xbc",
+    "jr nz,/label/"
+    },
+    {
+    }
+},
+{
+	{
+	"cp xbc,0",
+	"scc z,bc",
+	"neg bc",
+	"exts xbc",
+	"cp xbc,-1",
+	"pop xbc",
+	"jr z,/label/"
+	},
+	{
+	1,
+	6,
+	{"jr z,$1"}
+	}
+},
+{
+	{
+	"cp xbc,0",
+	"scc nz,xbc",
+	"neg bc",
+	"exts xbc",
+	"cp xbc,-1",
+	"pop xbc",
+	"jr nz,/label/"
+	},
+	{
+	1,
+	6,
+	{"jr z,$1"}
+	}
+},
+{
+	{
+	"cp xbc,xwa",
+	"scc z,bc",
+	"neg bc",
+	"exts xbc",
+	"cp xbc,-1",
+	"pop xbc",
+	"jr nz,/label/"
+	},
+	{
+	1,
+	6,
+	7
+	}
+},
+{
+	{
+	"push xbc",
+	"ld bc,(xbc)",
+	"extz xbc",
+	"ld (/imm/),bc",
+	"pop xbc"
+	},
+	{
+	{"ld wa,(xbc)"},
+	{"ld ($1),wa"}
+	}
+},
+{
+	{
+	"push xbc",
+	"ld xbc,xhl",
+	"pop xwa",
+	"add xbc,xwa"
+	},
+	{
+	{"add xbc,xhl"}
+	}
+},
+{
+	{
+	"push xbc",
+	"cp xbc,/imm/",
+	"pop xbc"
+	},
+	{
+	2
+	}
+},
+{
+	{
+	"push xbc",
+	"ld xbc,/imm/",
+	"push xbc",
+	"ld xbc,/imm/",
+	"ld (-xiy),xiz",
+	"ld (-xiy),xhl",
+	"pop xiz",
+	"ld xhl,xbc",
+	"pop xbc"
+	},
+	{
+	{"ld (-xiy),xiz"},
+	{"ld (-xiy),xhl"},
+	{"ld xhl,$2"},
+	{"ld xiz,$1"}
+	}
+},
+{
+	{
+	"push xbc",
+	"ld xbc,/imm/",
+	"pop xwa",
+	"ld (xbc),a",
+	"pop xbc"
+	},
+	{
+	{"ld ($1),c"},
+	{"pop xbc"}
+	}
+},
+{
+	{
+	"ldb (xbc),/imm/",
+	"inc 1,xbc"
+	},
+	{
+	{"ldb (xbc+),$1"}
+	}
+},
+{
+	{
+	"push xbc",
+	"ld xbc,/imm/",
+	"add xhl,xbc",
+	"pop xbc"
+	},
+	{
+    {COND,NUMRANGE,1,1,8,1,"inc $1,xhl"},
+    {COND,NUMRANGE,1,1,8,0,"add xhl,$1"}
+    }
+},
+{
+	{
+	"push xbc",
+	"ld xbc,(xde+/imm/)",
+	"sll xbc,/imm/",
+	"pop xwa",
+	"add xbc,xwa"
+	},
+	{
+	{"ld xwa,(xde+$1)"},
+	{"sll xwa,$2"},
+	{"add xbc,xwa"}
+	}
+},
+{
+	{
+	"push xbc",
+	"ld xbc,(xsp+/imm/)",
+	"pop xwa",
+	"ld (xbc),wa",
+	"pop xbc"
+	},
+	{
+	{"ld xwa,(xsp+%($1-#4))"},
+	{"ld (xwa),bc"},
+	{"pop xbc"}
+	}
+},
+--------------------------#######################-------------------
 {
 	{
 	"move.l d0,-(a2)",
@@ -162,42 +544,6 @@ constant intpatterns_68k = {
 {
 	{
 	"cmp.l #/imm/,d0",
-	"sne d0",
-	"ext.w d0",
-	"ext.l d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d0",
-	"cmp.l #-1,d1",
-	"bne /label/"
-	},
-	{
-	{"move.l d0,d1"},
-	6,
-	{"cmp.l #$1,d1"},
-	{"beq $2"}
-	}
-},
-{
-	{
-	"cmp.l #/imm/,d0",
-	"seq d0",
-	"ext.w d0",
-	"ext.l d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d0",
-	"cmp.l #-1,d1",
-	"bne /label/"
-	},
-	{
-	{"move.l d0,d1"},
-	6,
-	{"cmp.l #$1,d1"},
-	{"bne $2"}
-	}
-},
-{
-	{
-	"cmp.l #/imm/,d0",
 	"seq d0",
 	"ext.w d0",
 	"ext.l d0",
@@ -253,32 +599,6 @@ constant intpatterns_68k = {
 	{
 	2,
 	4
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	"or.l d1,d0"
-	},
-	{
-	{"or.l #$1,d0"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.w (a2)+,(a0,d0)",
-	"addq.l #/imm/,a2",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.l #$1,a5"},
-	{"move.w d0,(a5)"},
-	--{"addq.l #$2,a2"},
-	{"move.l (a2)+,d0"}
 	}
 },
 {
@@ -342,94 +662,6 @@ constant intpatterns_68k = {
 	},
 	{
 	{2,1,6," #$1,(a1)+"}
-	}
-},
-{	
-	{
-	"move.l d0,-(a2)",
-	"move.l #/var/,d0",
-	"move.l (a2)+,(a0,d0)",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.l #$1,a5"},
-	{"move.l d0,(a5)"},
-	4
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d1,d0",
-	"move.w (a2)+,(a0,d0)",
-	"addq.l #2,a2",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.w d0,(a0,d1)"},
-	--4,
-	5
-	}
-},
-{
-	{
-	"move.l #/var/,d0",
-	"move.l (a0,d0),d0"
-	},
-	{
-	{"move.l #$1,a5"},
-	{"move.l (a5),d0"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d6,d0",
-	"lsl.l #/imm/,d0",
-	"move.l (a2)+,d1",
-	"add.l d1,d0"
-	},
-	{
-	{"move.l d6,d1"},
-	{"lsl.l #$1,d1"},
-	{"add.l d1,d0"}
-	}
-},
-{
-	{
-	"move.w (a2)+,(a0,d0)",
-	"addq.l #2,a2"
-	},
-	{
-	{"move.l (a2)+,d1"},
-	{"move.w d1,(a0,d0)"}
-	}
-},
-{
-	{
-	"move.b (a2)+,(a0,d0)",
-	"addq.l #3,a2"
-	},
-	{
-	{"move.l (a2)+,d1"},
-	{"move.b d1,(a0,d0)"}
-	}
-},
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l #/imm/,a5",
-	"move.w #/imm/,(a5)",
-	"move.l #/imm/,a5",
-	"move.w d0,(a5)",
-	"move.l (a2)+,d0"
-	},
-	{
-	3,
-	4,
-	5,
-	{"move.w #$1,(a5)"}
 	}
 },
 {
@@ -629,77 +861,6 @@ constant intpatterns_68k = {
 },
 {
 	{
-	"move.l d1,d0",
-	"move.l d0,d1"
-	},
-	{
-	1
-	}
-},
-{
-	{
-	"move.l d1,d0",
-	"move.l (a2)+,d0"
-	},
-	{
-	2
-	}
-},
-{
-	{
-	"move.l d0,(a2)",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"addq.l #4,a2"}
-	}
-},
-{
-	{
-	"and.l #/imm/,d0",
-	"cmp.l #0,d0"
-	},
-	{
-	1
-	}
-},
-	
-
-
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l d0,-(a2)",
-	"moveq.l #/imm/,d0",
-	"move.l d0,d1",
-	"move.l (a2)+,d2",
-	"move.l (a2)+,d0",
-	"cmp.l d1,d2",
-	"b/cond/ /label/"
-	},
-	{
-	{"cmp.l #$1,d0"},
-	8
-	}
-},
-
-{
-	{
-	"move.l d0,-(a2)",
-	"move.l (a0,d0),d0",
-	"move.l d0,-(a2)",
-	"move.l #/imm/,d0",
-	"move.l (a2)+,(a0,d0)",
-	"move.l (a2)+,d0"
-	},
-	{
-	{"move.l (a0,d0),d1"},
-	{"move.l #$1,a5"},
-	{"move.l d1,(a5)"}
-	}
-},
-{
-	{
 	"move.l d0,-(a2)",
 	"move.l d6,d0",
 	"move.l #/var/,a5",
@@ -715,30 +876,31 @@ constant intpatterns_68k = {
 
 
 
-constant intpatterns2_68k = {
+constant intpatterns2_tlcs900h = {
 {
 	{
-	"move.l d0,-(a2)",
-	"move.l (a2)+,d0"
+	"push xbc",
+	"pop xbc"
 	},
 	{
 	}
 },
 {
 	{
-	"move.l (a2)+,d0",
-	"move.l d0,-(a2)"
+	"pop xbc",
+	"push xbc"
 	},
 	{
+	{"ld xbc,(xsp)"}
 	}
 },
-{	{
-	"move.l (a4)+,d6",
-	"move.l (a4)+,d7",
-	"move.l d7,-(a4)",
-	"move.l d6,-(a4)"
+{
+	{
+	{"ld xbc,/imm/","ld xbc,(xbc)","ld xbc,(xwa)","ld xbc,(xsp)","ld xbc,(xsp+4)"},
+	{"ld xbc,/imm/","ld xbc,(xbc)","ld xbc,(xwa)","ld xbc,(xsp)","ld xbc,(xsp+4)"}
 	},
 	{
+	2
 	}
 },
 {
@@ -784,21 +946,21 @@ end function
 
 
 -- Is this a push instruction ?
---function is_push(sequence s)
---	if length(s)>4 then
---		if equal(s[1..4],"push") then
---			return 1
---		elsif length(s)>19 then
---			if equal(s[1..19],"mov dword ptr [esp]") then
---				return 2
---			end if
---		end if
---	end if
---	return 0
---end function
+function is_push(sequence s)
+	if length(s) > 4 then
+		if equal(s[1..4], "push") then
+			return 1
+		elsif length(s) > 7 then
+			if equal(s[1..7], "ld (xsp") then
+				return 2
+			end if
+		end if
+	end if
+	return 0
+end function
 
 
-function is_68kpush(sequence s)
+function is_tlcs900hpush(sequence s)
 --	integer p
 --
 --	if length(s)>=4 then
@@ -815,7 +977,7 @@ function is_68kpush(sequence s)
 end function
 
 
-function is_68kpop(sequence s)
+function is_tlcs900hpop(sequence s)
 --	integer p
 --	
 --	if (length(s)>=4) then
@@ -873,7 +1035,7 @@ end function
 
 
 
-function compare_patterns_68k(sequence s1,sequence s2)
+function compare_patterns_tlcs900h(sequence s1,sequence s2)
 	integer eql,p1,p2,m,n,o
 	sequence s3,s4
 	
@@ -901,7 +1063,7 @@ function compare_patterns_68k(sequence s1,sequence s2)
 			s4 = {}
 			while p1<=length(s1) do
 				if s1[p1]=',' or
-				   s1[p1]=']' then
+				   s1[p1]=']' or s1[p1]=')' then
 					exit
 				end if
 				s4 &= s1[p1]
@@ -1098,7 +1260,7 @@ end function
 
 
 
-function pattern_append_68k(sequence s1,sequence s2)
+function pattern_append_tlcs900h(sequence s1,sequence s2)
 	integer p2,m,n,oper,expval
 	sequence s3,s4,ops
 
@@ -1195,7 +1357,7 @@ end function
 
 
 
-function pattern_optimise_68k(sequence subject,sequence patterns,integer maxIterations)
+function pattern_optimise_tlcs900h(sequence subject, sequence patterns, integer maxIterations)
 	integer i1,i2,i3,i4,p,q,n,m,o,clean,improvement,times,reachable,newlen
 	sequence s,r,t,u,pat
 
@@ -1215,7 +1377,7 @@ function pattern_optimise_68k(sequence subject,sequence patterns,integer maxIter
 						if sequence(pat[1][j][1]) then
 							m = 0
 							for k=1 to length(pat[1][j]) do
-								if compare_patterns_68k(subject[p+j-1],pat[1][j][k]) then
+								if compare_patterns_tlcs900h(subject[p+j-1],pat[1][j][k]) then
 									m = k
 									exit
 								end if
@@ -1225,7 +1387,7 @@ function pattern_optimise_68k(sequence subject,sequence patterns,integer maxIter
 								exit
 							end if
 						else
-							if not compare_patterns_68k(subject[p+j-1],pat[1][j]) then
+							if not compare_patterns_tlcs900h(subject[p+j-1],pat[1][j]) then
 								n = 0
 								exit
 							end if
@@ -1248,38 +1410,38 @@ function pattern_optimise_68k(sequence subject,sequence patterns,integer maxIter
 							for j=1 to length(pat[2]) do
 								if sequence(pat[2][j]) then
 									if sequence(pat[2][j][1]) then
-										s = pattern_append_68k(s,pat[2][j][1])
+										s = pattern_append_tlcs900h(s,pat[2][j][1])
 										newlen += 1
 									else
 										if pat[2][j][1] = COND then
 											if pat[2][j][2] = NUMRANGE then
 												t = value(patvars[pat[2][j][3]])
 												if t[2]>=pat[2][j][4] and t[2]<=pat[2][j][5] and pat[2][j][6] then
-													s = pattern_append_68k(s,pat[2][j][7])
+													s = pattern_append_tlcs900h(s,pat[2][j][7])
 													newlen += 1
 												elsif (not (t[2]>=pat[2][j][4] and t[2]<=pat[2][j][5])) and pat[2][j][6]=0 then
-													s = pattern_append_68k(s,pat[2][j][7])
+													s = pattern_append_tlcs900h(s,pat[2][j][7])
 													newlen += 1
 												end if
 											elsif pat[2][j][2] = LESSBITSSET then
 												t = value(patvars[pat[2][j][3]])
 												u = value(patvars[pat[2][j][4]])
 												if count_bits(t[2])<count_bits(u[2]) and pat[2][j][6] then
-													s = pattern_append_68k(s,pat[2][j][7])
+													s = pattern_append_tlcs900h(s,pat[2][j][7])
 													newlen += 1
 												elsif count_bits(t[2])>=count_bits(u[2]) and pat[2][j][6]=0 then
-													s = pattern_append_68k(s,pat[2][j][7])
+													s = pattern_append_tlcs900h(s,pat[2][j][7])
 													newlen += 1
 												end if
 											end if
 
 										else
-											s = pattern_append_68k(s,subject[p+pat[2][j][1]-1][pat[2][j][2]..pat[2][j][3]]&pat[2][j][4])
+											s = pattern_append_tlcs900h(s,subject[p+pat[2][j][1]-1][pat[2][j][2]..pat[2][j][3]]&pat[2][j][4])
 											newlen += 1
 										end if
 									end if
 								else
-									s = pattern_append_68k(s,subject[p+pat[2][j]-1])
+									s = pattern_append_tlcs900h(s,subject[p+pat[2][j]-1])
 									newlen += 1
 								end if
 							end for
@@ -1308,7 +1470,7 @@ end function
 
 
 
-function optimise_register_usage_68k(sequence subject)
+function optimise_register_usage_tlcs900h(sequence subject)
 	integer m,n,o,p,q,d
 	integer loopStart,loopEnd,maxDepth
 	integer clean,times,improvement
@@ -1349,7 +1511,7 @@ function optimise_register_usage_68k(sequence subject)
 							--if find('[',subject[m])>0 then
 							patvars = {}
 							depth &= d
-							if compare_patterns_68k(subject[m],"move.l /dreg/,-(a2)") then
+							if compare_patterns_tlcs900h(subject[m],"move.l /dreg/,-(a2)") then
 								--s = value(patvars[1])
 								--if s[2]=-4 then
 									d += 4
@@ -1371,15 +1533,15 @@ function optimise_register_usage_68k(sequence subject)
 								clean = 0
 								exit
 							
-							elsif compare_patterns_68k(subject[m],"lea /label/,a6") then
+							elsif compare_patterns_tlcs900h(subject[m],"lea /label/,a6") then
 								clean = 0
 								exit
-							elsif compare_patterns_68k(subject[m],"move.l (a2)+,/dreg/") then
+							elsif compare_patterns_tlcs900h(subject[m],"move.l (a2)+,/dreg/") then
 								d -= 4
 								r[find(patvars[length(patvars)],dregs)] = 1
-							elsif compare_patterns_68k(subject[m],"move.l /dreg/,/dreg/") then
+							elsif compare_patterns_tlcs900h(subject[m],"move.l /dreg/,/dreg/") then
 								r[find(patvars[length(patvars)],dregs)] = 1
-							elsif compare_patterns_68k(subject[m],"move.l #/imm/,/dreg/") then
+							elsif compare_patterns_tlcs900h(subject[m],"move.l #/imm/,/dreg/") then
 								r[find(patvars[length(patvars)],dregs)] = 1
 							end if
 							
@@ -1405,7 +1567,7 @@ function optimise_register_usage_68k(sequence subject)
 							n = 1
 							while m<loopEnd do
 								patvars = {}
-								if compare_patterns_68k(subject[m],"move.l /dreg/,-(a2)") then
+								if compare_patterns_tlcs900h(subject[m],"move.l /dreg/,-(a2)") then
 									--s = value(patvars[1])
 									--d -= floor(floor(s[2])/4)
 									--if d > maxDepth then
@@ -1420,18 +1582,18 @@ function optimise_register_usage_68k(sequence subject)
 										--linesRemoved += 1
 										--p -= 1
 									end if
-								elsif compare_patterns_68k(subject[m],"move.l (a2),/dreg/") then
+								elsif compare_patterns_tlcs900h(subject[m],"move.l (a2),/dreg/") then
 									if depth[n]>1 and depth[n]<=length(r)+1 then
 										subject[m] = "move.l "&dregs[r[depth[n]-1]]&","&patvars[length(patvars)]
 									end if
-								elsif compare_patterns_68k(subject[m],"move.l /dreg/,(a2)") then
+								elsif compare_patterns_tlcs900h(subject[m],"move.l /dreg/,(a2)") then
 									if depth[n]>1 and depth[n]<=length(r)+1 then
 										subject[m] = "move.l "&patvars[length(patvars)]&","&dregs[r[depth[n]-1]]
 									end if
 								
 								--elsif compare_patterns_68k(subject[m],"/reg/ = [p1 + /imm/];") then
 								--elsif compare_patterns_68k(subject[m],"[p1 + /imm/] = /reg/;") then
-								elsif compare_patterns_68k(subject[m],"move.l (a2)+,/dreg/") then
+								elsif compare_patterns_tlcs900h(subject[m],"move.l (a2)+,/dreg/") then
 									if depth[n]>1 and depth[n]<=length(r)+1 then
 										subject[m] = "move.l "&dregs[r[depth[n]-1]]&","&patvars[length(patvars)]
 									end if
@@ -1472,7 +1634,7 @@ end function
 
 
 
-global function optimise_m68k(sequence subject,integer remConst)
+global function optimise_tlcs900h(sequence subject,integer remConst)
 	integer i1,i2,i3,i4,p,q,n,m,o,clean,improvement,times,reachable
 	sequence s,r,t,u,pat
 	integer regsAreFree,isInnermost
@@ -1552,7 +1714,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 	
 	if optLevel >= 5 then
 		-- Run up to 10 passes
-		subject = pattern_optimise_68k(subject,intpatterns_68k,10)
+		subject = pattern_optimise_tlcs900h(subject, intpatterns_tlcs900h, 10)
 
 
 		-- This code removes unnecessary return stack operations
@@ -1565,7 +1727,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 				while q<=length(subject) do
 					if equal(subject[q],"move.l (a3)+,a6") then
 						exit
-					elsif compare_patterns_68k(subject[q],"lea /label/,a6") then
+					elsif compare_patterns_tlcs900h(subject[q],"lea /label/,a6") then
 						clean = 0
 						exit
 					end if
@@ -1580,7 +1742,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 			p += 1
 		end while
 		
-		subject = optimise_register_usage_68k(subject)
+		subject = optimise_register_usage_tlcs900h(subject)
 
 		-- This code tries to move constant assignments out of innermost loops
 		times = 3
@@ -1619,7 +1781,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 									if find(subject[m][length(subject[m])-1..length(subject[m])],regs68k) then
 										s = {0,find(subject[m][length(subject[m])-1..length(subject[m])],regs68k)}
 										patvars = {}
-										if compare_patterns_68k(subject[m],"move.l #/imm/,/reg/") and r[s[2]]!=-1 then
+										if compare_patterns_tlcs900h(subject[m],"move.l #/imm/,/reg/") and r[s[2]]!=-1 then
 											if r[s[2]]=0 then
 												t[s[2]] = patvars[1]
 												u[s[2]] = {m}
@@ -1631,7 +1793,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 											end if
 										else
 										patvars = {}
-										if compare_patterns_68k(subject[m],"move.l #/const/,/reg/") and r[s[2]]!=-1 then
+										if compare_patterns_tlcs900h(subject[m],"move.l #/const/,/reg/") and r[s[2]]!=-1 then
 											if r[s[2]]=0 then
 												t[s[2]] = patvars[1]
 												u[s[2]] = {m}
@@ -1647,7 +1809,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 										end if
 									end if
 									patvars = {}
-									if compare_patterns_68k(subject[m],"lea /label/,a6") then
+									if compare_patterns_tlcs900h(subject[m],"lea /label/,a6") then
 										r = repeat(-1,16)
 										exit
 									end if
@@ -1704,7 +1866,7 @@ global function optimise_m68k(sequence subject,integer remConst)
 		end while
 		
 		
-		subject = pattern_optimise_68k(subject,intpatterns2_68k,4)
+		subject = pattern_optimise_tlcs900h(subject,intpatterns2_tlcs900h,4)
 	end if
 	
 	

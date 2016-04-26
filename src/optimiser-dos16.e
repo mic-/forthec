@@ -1,5 +1,5 @@
 -- ForthEC x86-16 code optimiser 
--- /Mic, 2005
+-- /Mic, 2005/2008
 
 
 include parser.e
@@ -340,13 +340,14 @@ constant intpatterns = {
 {
 	{
 	"sub word [loopstackptr],4",
-	"mov si,0",
+	"mov si,/imm/",
 	"add word [loopstackptr],4"
 	},
 	{
 	2
 	}
 },
+----- 2008 -----
 {
 	{
 	"push /reg16/",
@@ -360,6 +361,630 @@ constant intpatterns = {
 	4
 	}
 },
+{
+	{
+	"mov dx,/imm/",
+	"out dx,al",
+	"mov al,/imm/",
+	"inc dx",
+	"out dx,al",
+	"mov al,$2",
+	"mov dx,%($1+#1)",
+	"out dx,al"
+	},
+	{
+	1,
+	2,
+	3,
+	4,
+	5,
+	8
+	}
+},
+{
+	{
+	"push word [bx]",
+	"mov bx,[bx]",
+	"movzx ax,byte [es:bx]",
+	"pop bx",
+	"push ax",
+	"add bx,/imm/",
+	"movzx ax,byte [es:bx]",
+	"pop bx"
+	},
+	{
+	2,
+	3,
+	5,
+	6,
+	7,
+	8
+	}
+},
+{
+	{
+	"mov bx,sp",
+	"mov ax,[bx]",
+	"shl ax,/imm/",
+	"mov bx,sp",
+	"or ax,[bx]"
+	},
+	{
+	1,
+	2,
+	3,
+	5
+	}
+},
+{
+	{
+	"push word [bx]",
+	"mov bx,[bx]",
+	"movzx ax,byte [es:bx]",
+	"add bx,/imm/",
+	"movzx bx,byte [es:bx]",
+	"add ax,bx",
+	"pop bx"
+	},
+	{
+	2,
+	3,
+	{"movzx cx,byte [es:bx+$1]"},
+	{"add ax,cx"}
+	}
+},
+{
+	{
+	"movzx cx,byte [es:bx+/imm/]",
+	"add ax,cx",
+	"add bx,/imm/",
+	"movzx bx,byte [es:bx]",
+	"add ax,bx"
+	},
+	{
+	1,
+	2,
+	{"movzx cx,byte [es:bx+$2]"},
+	{"add ax,cx"}
+	}
+},
+{
+	{
+	"push word [bx]",
+	"mov bx,[bx]",
+	"movzx ax,byte [es:bx]",
+	"movzx cx,byte [es:bx+/imm/]",
+	"add ax,cx",
+	"movzx cx,byte [es:bx+/imm/]",
+	"add ax,cx",
+	"pop bx"
+	},
+	{
+	2,
+	3,
+	4,
+	5,
+	6,
+	7
+	}
+},
+{
+	{
+	"push ax",
+	"add bx,/imm/",
+	"movzx ax,byte [es:bx]",
+	"mov bp,sp",
+	"add [bp],ax"
+	},
+	{
+	{"movzx cx,byte [es:bx+$1]"},
+	{"add ax,cx"},
+	{"push ax"}
+	}
+},
+{
+	{
+	"mov bx,sp",
+	"cmp word [bx],0",
+	"jz /label/",
+	"mov bp,sp",
+	"dec word [bp]",
+	"$1:"
+	},
+	{
+	1,
+	{"cmp word [bx],1"},
+	{"cmc"},
+	{"sbb word [bx],0"}
+	}
+},
+{
+	{
+	"mov ax,[/reg16/]",
+	"shl ax,8",
+	"or ax,[$1]"
+	},
+	{
+	1,
+	{"mov ah,al"}
+	}
+},
+{
+	{
+	"push ax",
+	"/label/",
+	"mov bx,sp",
+	"mov ax,[bx]",
+	"mov ah,al",
+	"mov [bx],ax",
+	"mov bx,[bx+/imm/]",
+	"mov [es:bx],ax",
+	"mov bx,sp",
+	"mov bx,[bx+$2]",
+	"add bx,/imm/",
+	"pop ax"
+	},
+	{
+	2,
+	3,
+	5,
+	{"mov bx,[bx+%($2-#2)]"},
+	8,
+	11
+	}
+},
+{
+	{
+	"push si",
+	"mov bp,sp",
+	"shl word [bp],/imm/",
+	"mov bp,sp"
+	},
+	{
+	{"mov ax,si"},
+	{"shl ax,$1"},
+	{"push ax"},
+	4
+	}
+},
+
+{
+	{
+	"push ax",
+	"mov bp,sp",
+	{"sal word [bp],/imm/","sar word [bp],/imm/","shl word [bp],/imm/","shr word [bp],/imm/"},
+	"mov bx,sp",
+	"cmp word [bx],1",
+	"cmc",
+	"sbb word [bx],0"
+	},
+	{
+	{3,1,3," ax,$1"},
+	{"cmp ax,1"},
+	6,
+	{"sbb ax,0"},
+	1
+	}
+},
+{
+	{
+	"mov bx,sp",
+	"push word [bx+/imm/]",
+	"mov ax,/imm/",
+	"pop bx",
+	"add bx,ax"
+	},
+	{
+	1,
+	{"mov bx,[bx+$1]"},
+	{"add bx,$2"}
+	}
+},
+
+{
+	{
+	"pop cx",
+	"pop bx",
+	"mov ax,/imm/",
+	"add ax,bx",
+	"push ax",
+	"push cx"
+	},
+	{
+	{"mov bp,sp"},
+	{"add word [bp+2],$1"}
+	}
+},
+{
+	{
+	"push ax",
+	"mov bx,cx",
+	"pop ax"
+	},
+	{
+	2
+	}
+},
+{
+	{
+	"pop ax",
+	"pop cx",
+	"push ax",
+	"push cx",
+	"mov ax,/imm/",
+	"pop bx",
+	"add ax,bx",
+	"pop cx"
+	},
+	{
+	{"pop cx"},
+	{"pop bx"},
+	5,
+	7
+	}
+},
+
+{
+	{
+	"mov bx,sp",
+	"or [bx],ax",
+	"mov bx,sp",
+	"mov ax,[bx]"
+	},
+	{
+	1,
+	{"or ax,[bx]"},
+	{"mov [bx],ax"}
+	}
+},
+
+{
+	{
+	"push ax",
+	"add bx,/imm/",
+	"movzx ax,byte [es:bx]",
+	"pop bx",
+	"add ax,bx",
+	"pop bx"
+	},
+	{
+	2,
+	{"movzx bx,byte [es:bx]"},
+	5,
+	6
+	}
+},
+
+{
+	{
+	"push word [bx]",
+	"mov bx,sp",
+	"push word [bx]"
+	},
+	{
+	1,
+	1 --{"push word [bx+2]"}
+	}
+},
+{
+	{
+	"mov bx,sp",
+	"push word [bx]",
+	"mov bp,sp",
+	{"sal word [bp],/imm/","sar word [bp],/imm/","shl word [bp],/imm/","shr word [bp],/imm/"},
+	"pop ax"
+	},
+	{
+	1,
+	{"mov ax,[bx]"},
+	{4,1,3," ax,$1"}
+	}
+},
+{
+	{
+	"push word [bx]",
+	"mov ax,/imm/",
+	"pop cx",
+	"cmp cx,ax"
+	},
+	{
+	{"cmp word [bx],$1"}
+	}
+},
+{
+	{
+	"push word [bx]",
+	"mov bx,sp",
+	"mov bx,[bx+/imm/]",
+	"pop ax"
+	},
+	{
+	{"mov ax,[bx]"},
+	{"mov bx,[bx+%($1-#2)]"}
+	}
+},	
+{	
+	{
+	"mov bx,sp",
+	"add bx,/imm/",
+	"mov bx,[bx]"
+	},
+	{
+	1,
+	{"mov bx,[bx+$1]"}
+	}
+},
+{
+	{
+	"mov bx,sp",
+	"add bx,/imm/",
+	"push word [bx]"
+	},
+	{
+	1,
+	{"push word [bx+$1]"}
+	}
+},
+--{
+--	{
+--	"push word [bx+/imm/]",
+--	"mov bx,sp",
+--	"push word [bx]"
+--	},
+--	{
+--	1,
+--	{"push word [bx+%($1+#2)]"}
+--	}
+--},
+{
+	{
+	"mov dx,/imm/",
+	"pop ax",
+	"out dx,al"
+	},
+	{
+	2,
+	1,
+	3
+	}
+},
+{
+	{
+	"push /reg16d/",
+	"mov bp,sp",
+	{"sal word [bp],/imm/","sar word [bp],/imm/","shl word [bp],/imm/","shr word [bp],/imm/"},
+	"mov bp,sp",
+	{"inc word [bp]","dec word [bp]"},
+	"pop ax"
+	},
+	{
+	{"mov ax,$1"},
+	{3,1,3," ax,$2"},
+	{5,1,3," ax"}
+	}
+},
+{
+	{
+	"push word /ind/",
+	"mov bp,sp",
+	{"sal word [bp],/imm/","sar word [bp],/imm/","shl word [bp],/imm/","shr word [bp],/imm/"},
+	"mov bp,sp",
+	{"inc word [bp]","dec word [bp]"},
+	"pop ax"
+	},
+	{
+	{"mov ax,$1"},
+	{3,1,3," ax,$2"},
+	{5,1,3," ax"}
+	}
+},
+{
+	{
+	"push word /var/",
+	"mov bx,[loopstackptr]",
+	"mov ax,/ind/",
+	"pop bx"
+	},
+	{
+	2,
+	3,
+	{"mov bx,$1"}
+	}
+},
+{
+	{
+	"mov bx,sp",
+	"mov ax,[bx]",
+	"add si,ax",
+	"cmp si,di",
+	"jne /label/"
+	},
+	{
+	1,
+	{"add si,[bx]"},
+	4,
+	5
+	}
+},
+{
+	{
+	"push word /ind/",
+	"mov bp,sp",
+	{"sal word [bp],/imm/","shl word [bp],/imm/"},
+	"mov bp,sp",
+	"inc word [bp]"
+	},
+	{
+	{"mov ax,$1"},
+	{3,1,3," ax,$2"},
+	{"inc ax"},
+	{"push ax"}
+	}
+},
+{
+	{
+	"push word /imm/",
+	"mov /reg16/,/imm/",
+	"pop /reg16/"
+	},
+	{
+	2,
+	{"mov $4,$1"}
+	}
+},
+{
+	{
+	"push /reg16/",
+	{"push word /imm/","push byte /imm/"},
+	"mov bx,sp",
+	"push word [bx+2]",
+	"mov bx,[loopstackptr]",
+	"mov ax,[bx-2]",
+	"pop si"
+	},
+	{
+	1,
+	2,
+	{"mov si,$1"},
+	5,
+	6
+	}
+},
+{
+	{
+	{"push word /imm/","push byte /imm/"},
+	"mov si,ax",
+	"mov bx,[loopstackptr]",
+	"mov ax,[bx-2]",
+	"add si,ax",
+	"add word [loopstackptr],4",
+	"pop di"
+	},
+	{
+	2,
+	3,
+	{"add si,[bx-2]"},
+	6,
+	{"mov di,$1"}
+	}
+},
+
+{
+	{
+	"push /reg16d/",
+	"mov bp,sp",
+	{"inc word [bp]","dec word [bp]"},
+	"pop ax"
+	},
+	{
+	{"mov ax,$1"},
+	{3,1,3," ax"}
+	}
+},
+{
+	{
+	"mov dx,/imm/",
+	"out dx,al",
+	"mov al,/imm/",
+	"mov dx,$1",
+	"out dx,al"
+	},
+	{
+	1,
+	2,
+	3,
+	5
+	}
+},
+{
+	{
+	"mov dx,/imm/",
+	"out dx,al",
+	"mov al,/imm/",
+	"out dx,al",
+	"mov al,$2",
+	"mov dx,$1",
+	"out dx,al"
+	},
+	{
+	1,
+	2,
+	3,
+	4,
+	4
+	}
+},
+{
+	{
+	"push /reg16/",
+	"mov bp,sp",
+	{"inc word [bp]","dec word [bp]"},
+	"mov bp,sp",
+	{"add word [bp],/imm/","sub word [bp],/imm/"},
+	"pop ax"
+	},
+	{
+	{"mov ax,$1"},
+	{3,1,3," ax"},
+	{5,1,3," ax,$2"}
+	}
+},
+{
+	{
+	"mov dx,/imm/",
+	"in al,dx"
+	},
+	{
+	{COND,NUMRANGE,1,0,255,1,"in al,$1"},
+	{COND,NUMRANGE,1,0,255,0,"mov dx,$1"},
+	{COND,NUMRANGE,1,0,255,0,"in al,dx"}
+	}
+},
+{
+	{
+	"and ax,255",
+	"dec ax",
+	"cmp ax,0",
+	"jnz /label/"
+	},
+	{
+	{"dec al"},
+	4
+	}
+},
+	
+----- /2008 -----
+
+{
+	{
+	"mov dx,/imm/",
+	"out dx,al",
+	"mov al,/imm/",
+	"mov dx,%($1+#1)",
+	"out dx,al"
+	},
+	{
+	1,
+	2,
+	3,
+	{"inc dx"},
+	5
+	}
+},
+{
+	{
+	"push byte /imm/",
+	"mov dx,/imm/",
+	"pop ax",
+	"out dx,al"
+	},
+	{
+	{"mov al,$1"},
+	2,
+	{"out dx,al"}
+	}
+},
+
 {
 	{
 	"push /reg16/",
@@ -522,13 +1147,65 @@ constant intpatterns = {
 	{
 	{"mov byte $2,$1"}
 	}
-}
-	
+},
+{
+	{
+	"mov ax,/imm/",
+	"mov bx,sp",
+	"lea bx,[bx+ax*2]"
+	},
+	{
+	2,
+	{"add bx,%($1*#2)"}
+	}
+},
+{
+	{
+	"push byte /imm/",
+	"mov dx,/imm/",
+	"pop ax",
+	"out dx,al",
+	"push byte $1",
+	"mov dx,$2",
+	"pop ax",
+	"out dx,al"
+	},
+	{
+	{"mov al,$1"},
+	2,
+	4,
+	4
+	}
+},
+{
+	{
+	"push /reg16/",
+	"mov ax,/imm/",
+	"pop bx",
+	"add bx,ax"
+	},
+	{
+	{"mov bx,$1"},
+	{"add bx,$2"}
+	}
+},
+{
+	{
+	"pop cx",
+	"push ax",
+	"mov bx,cx",
+	"add bx,/imm/"
+	},
+	{
+	{"pop bx"},
+	2,
+	4
+	}
+}	
 
 }
 
 
---? length(intpatterns)
 
 	
 linesRemoved = 0
@@ -638,8 +1315,8 @@ end function
 
 
 function compare_patterns(sequence s1,sequence s2)
-	integer eql,p1,p2,m,n,o
-	sequence s3,s4
+	integer eql,p1,p2,m,n,o,expval,oper
+	sequence s3,s4,ops
 	
 	eql = 1
 	p1 = 1
@@ -842,7 +1519,7 @@ function compare_patterns(sequence s1,sequence s2)
 			--end if
 			
 			if not equal(s3,s4) then
-				if s3[1]='_' then
+				if s3[1]='_' or s3[1]='@' then
 					if not equal(s3&':',s4) then
 						eql = 0
 					end if
@@ -850,7 +1527,75 @@ function compare_patterns(sequence s1,sequence s2)
 					eql = 0
 				end if
 			end if
-				
+
+		elsif s2[p2]='%' then
+			p2 += 2
+			expval = 0
+			ops = {}
+			oper = 0
+			while s2[p2] != ')' do
+				if s2[p2] = '$' or
+				   s2[p2] = '#' then
+				   	m = s2[p2]
+					n = 0
+					p2 += 1
+					while p2<=length(s2) do
+						if s2[p2]>='0' and s2[p2]<='9' then
+							n = n*10 + s2[p2]-'0'
+						else
+							exit
+						end if
+						p2 += 1
+					end while
+					if m='$' then
+						s4 = value(patvars[n])
+					else
+						s4 = {GET_SUCCESS,n}
+					end if
+					if oper=0 then
+						expval = s4[2]
+					elsif oper='+' then
+						expval += s4[2]
+					elsif oper='-' then
+						expval -= s4[2]
+					elsif oper='*' then
+						expval *= s4[2]
+					end if
+
+				elsif s2[p2] = '+' then
+					oper = s2[p2]
+					p2 += 1
+				elsif s2[p2] = '*' then
+					oper = s2[p2]
+					p2 += 1
+				elsif s2[p2] = '-' then
+					oper = s2[p2]
+					p2 += 1
+				else
+					p2 += 1
+				end if
+			end while
+			p2 += 1
+
+			s4 = {}
+			while p1<=length(s1) do
+				if s1[p1]=',' or
+				   s1[p1]=']' then
+				   	if s1[p1]=']' then p1+=1 end if
+					exit
+				end if
+				s4 &= s1[p1]
+				p1 += 1
+			end while
+			s3 = value(s4)
+			if s3[1]=GET_SUCCESS and integer(s3[2]) then
+				if s3[2] != expval then
+					eql = 0
+				end if
+			else
+				eql = 0
+			end if
+			
 		else
 			if s1[p1]!=s2[p2] then
 				eql = 0
@@ -983,15 +1728,6 @@ function pattern_optimise(sequence subject,sequence patterns,integer maxIteratio
 					n = 1
 					for j=1 to length(pat[1]) do
 						showCmp = 0
-						--if i=length(patterns) then
-						--	--if j>1 then ? j end if
-						--	if j=6 then
-						--		--puts(1,patvars[1]&"\n")
-						--		--puts(1,pat[1][j]&"\n")
-						--		--puts(1,subject[p+j-1]&"\n")
-						--		showCmp = 1
-						--	end if
-						--end if
 						
 						if sequence(pat[1][j][1]) then
 							m = 0
@@ -1067,7 +1803,6 @@ function pattern_optimise(sequence subject,sequence patterns,integer maxIteratio
 		maxIterations -= 1
 	end while
 		
-	--? maxIterations
 	
 	return subject
 end function
@@ -1094,15 +1829,12 @@ global function optimise_dos16(sequence subject,integer remConst)
 		end for
 	end if
 
-
-	
 	
 	if optLevel >= 5 then
 		-- Run up to 10 passes
 		subject = pattern_optimise(subject,intpatterns,10)
 
 	end if
-	
 	
 	return subject
 end function

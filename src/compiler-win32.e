@@ -47,16 +47,13 @@ include optimiser-win32.e
 
 
 
-
+-- Push a value on the parameter stack
 procedure PUSH_win32(atom a)
-	--if a>#10000 then
-	--	ADD_CODE({"sub esp,4",sprintf("mov dword ptr [esp],0%xh",a)},0)
-	--else
-		ADD_CODE({"sub esp,4",sprintf("mov dword ptr [esp],%d",a)},0)
-	--end if	
+	ADD_CODE({"sub esp,4",sprintf("mov dword ptr [esp],%d",a)},0)
 end procedure
 
 
+-- Handle comparison operations
 procedure CMPI_win32(sequence cond,integer p)
 	integer n
 	
@@ -72,6 +69,8 @@ procedure CMPI_win32(sequence cond,integer p)
 		elsif n=W_LEAVETRUE then
 			fastCmp = "j"&cond
 			ADD_CODE({"pop eax","pop ecx","cmp ecx,eax"},0)
+		else
+			n = 0
 		end if
 	end if
 	if not n then
@@ -99,7 +98,7 @@ end procedure
 
 
 function compile_win32()
-	integer n,p,q,continue,lastComp,case,hasDefault,touch,optI,uses_ebp,ebpCodePos,hasLoops
+	integer n,p,q,lastComp,case_,hasDefault,touch,optI,uses_ebp,ebpCodePos,hasLoops
 	sequence s,t,token,wordId,loopStack,params,caseLbl,asm,lsp
 	
 	
@@ -108,7 +107,7 @@ function compile_win32()
 	end if
 	
 	lastComp = 0
-	case = -1
+	case_ = -1
 	loopStack = {}
 	touch = 1
 	fastCmp = ""
@@ -219,14 +218,14 @@ function compile_win32()
 						p += 1
 					end if
 				elsif tokens[p][1] = W_TOUCH then
+					if length(asm) then
+						ADD_CODE({asm},0)
+						asm = {}
+					end if
 					exit
 				elsif tokens[p][1] = NEWLINE then
 					if length(asm) then
-						if length(pendingWordDef) then
-							code = append(code,asm)
-						else
-							maincode = append(maincode,asm)
-						end if
+						ADD_CODE({asm},0)
 						asm = {}
 					end if
 				elsif tokens[p][1] = W_CALL then
@@ -435,13 +434,13 @@ function compile_win32()
 						deferred = assoc_insert(tokens[p+1][2],make_label(tokens[p+1][2]),deferred)
 						p += 1
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 					
 		-- :
@@ -462,16 +461,16 @@ function compile_win32()
 							ebpCodePos = length(code)+1
 							ADD_CODE({"add miscstackptr,4","mov eax,miscstackptr","mov [eax-4],ebp","mov ebp,loopstackptr"},0)
 						else
-							ERROR("Attempt to define a word within a word",tokens[p+1])
+							ERROR(ERROR_WORD_INSIDE_WORD,tokens[p+1])
 						end if
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_EXPECTED_ID,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		-- :w
@@ -496,16 +495,16 @@ function compile_win32()
 							p += 1
 							uses_ebp = 1
 						else
-							ERROR("Attempt to define a word within a word",tokens[p+1])
+							ERROR(ERROR_WORD_INSIDE_WORD,tokens[p+1])
 						end if
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 			
 		-- {
@@ -544,7 +543,7 @@ function compile_win32()
 					ADD_CODE({"mov ebp,esp"},0)
 				end if
 			else
-				ERROR("Use of { outside word definition",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 		
 		-- ;
@@ -569,7 +568,7 @@ function compile_win32()
 				ebpCodePos = 0
 				hasLoops = 0
 			else
-				ERROR("Use of ; with no corresponding :",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 
 		-- ;@
@@ -847,8 +846,8 @@ function compile_win32()
 			
 		-- CASE
 		elsif tokens[p][1] = W_CASE then
-			if case=-1 then
-				case = 0
+			if case_=-1 then
+				case_ = 0
 				hasDefault = 0
 				caseLbl = sprintf("@@case_%06x",cases)
 				ADD_CODE({caseLbl&':'},0)
@@ -859,8 +858,8 @@ function compile_win32()
 		
 		-- OF
 		elsif tokens[p][1] = W_OF then
-			if case>=0 and not hasDefault then
-				ADD_CODE({"pop eax","cmp eax,caseVar","jne "&caseLbl&sprintf("_%04x_false",case)},0)
+			if case_>=0 and not hasDefault then
+				ADD_CODE({"pop eax","cmp eax,caseVar","jne "&caseLbl&sprintf("_%04x_false",case_)},0)
 			elsif hasDefault then
 				ERROR("OF found after DEFAULT",tokens[p])
 			else
@@ -869,19 +868,19 @@ function compile_win32()
 		
 		-- ENDOF
 		elsif tokens[p][1] = W_ENDOF then
-			if case>=0 then
+			if case_>=0 then
 				ADD_CODE({"jmp "&caseLbl&"_end"},0)
-				ADD_CODE({caseLbl&sprintf("_%04x_false:",case)},0)
-				case += 1
+				ADD_CODE({caseLbl&sprintf("_%04x_false:",case_)},0)
+				case_ += 1
 			else
 				ERROR("ENDOF outside CASE",tokens[p])
 			end if
 		
 		-- ENDCASE
 		elsif tokens[p][1] = W_ENDCASE then
-			if case>=0 then
+			if case_>=0 then
 				ADD_CODE({caseLbl&"_end:"},0)
-				case = -1
+				case_ = -1
 				cases += 1
 			else
 				ERROR("Unmatched ENDCASE",tokens[p])
@@ -889,7 +888,7 @@ function compile_win32()
 		
 		-- DEFAULT
 		elsif tokens[p][1] = W_DEFAULT then
-			if case>=0 then
+			if case_>=0 then
 				hasDefault = 1
 			else
 				ERROR("DEFAULT outside CASE",tokens[p])
@@ -910,14 +909,14 @@ function compile_win32()
 						--for i=1 to length(constants[1]) do
 						--	puts(1,constants[1][i]&", ")
 						--end for
-						ERROR("Non-unique identifier",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 						p += 1
 					end if
 				else
-					ERROR("Found constant inside word definition",tokens[p])				
+					ERROR(ERROR_CONST_INSIDE_WORD,tokens[p])				
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		-- FCONSTANT
@@ -933,11 +932,11 @@ function compile_win32()
 					end if
 					p += 1
 				else
-					ERROR("Non-unique identifier",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 					p += 1
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 		
 		-- VARIABLE
@@ -949,11 +948,11 @@ function compile_win32()
 					ADD_CODE({"mov eax,dictptr","mov "&s&",eax","add dictptr,4"},0)
 					p += 1
 				else
-					ERROR("Non-unique identifier",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 					p += 1
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		-- FVARIABLE
@@ -965,11 +964,11 @@ function compile_win32()
 					ADD_CODE({"mov eax,dictptr","mov "&s&",eax","add dictptr,8"},0)
 					p += 1
 				else
-					ERROR("Non-unique identifier",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 					p += 1
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 			
 		-- .
@@ -1029,7 +1028,7 @@ function compile_win32()
 				literals = append(literals,{sprintf("lit_%06x",length(literals)),"db \""&s&"\",0"})
 				ADD_CODE({sprintf("invoke WriteConsole,hOutput,ADDR "&literals[length(literals)][1]&",%d,ADDR lpCharsWritten,NULL",length(s))},0)
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 		
 		-- ".
@@ -1266,12 +1265,14 @@ function compile_win32()
 				free_reg(MMX_REG,rstack[i])
 			end for
 			rstack = {}
-			
+		
+		-- PDUP
 		elsif tokens[p][1] = W_PDUP then
 			n = alloc_reg(MMX_REG)
 			ADD_CODE({sprintf("movq mm(%d),mm(%d)",{n,rstack[1]})},0)
 			rstack = n&rstack
 
+		-- PDROP
 		elsif tokens[p][1] = W_PDROP then
 			n = rstack[1]
 			free_reg(MMX_REG,n)
@@ -1280,12 +1281,14 @@ function compile_win32()
 			else
 				rstack = rstack[2..length(rstack)]
 			end if
-		
+
+		-- P@		
 		elsif tokens[p][1] = W_PFETCH then
 			n = alloc_reg(MMX_REG)
 			rstack = n&rstack
 			ADD_CODE({"pop eax",sprintf("movd mm(%d),dword ptr [eax]",n)},0)
 
+		-- P!
 		elsif tokens[p][1] = W_PSTORE then
 			n = rstack[1]
 			ADD_CODE({"pop eax",sprintf("movd dword ptr [eax],mm(%d)",n)},0)
@@ -1411,7 +1414,7 @@ function compile_win32()
 				literals = append(literals,{sprintf("lit_%06x",length(literals)),"db \""&s&"\",0"})
 				ADD_CODE({"push offset "&literals[length(literals)][1]},0)
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 			
 		elsif tokens[p][1] = UNKNOWN then
@@ -1464,7 +1467,7 @@ function compile_win32()
 			end if
 			
 			if not n then
-				ERROR("Undefined word",tokens[p])
+				ERROR(ERROR_UNDECLARED,tokens[p])
 			end if
 		else
 			ERROR("Unsupported word",tokens[p])
@@ -1472,29 +1475,18 @@ function compile_win32()
 
 		p += 1
 	end while
+
+	if length(pendingWordDef) then
+		ERROR(ERROR_OPEN_WORD,pendingWordDef)
+	end if
+	
+	if length(loopStack) then
+		ERROR(ERROR_OPEN_DO,tokens[p-1])
+	end if
 	
 	return 0
 end function
 
-
-
-function cut_filename(sequence fname)
-	integer p
-	
-	p = length(fname)
-	while p>=1 do
-		if fname[p] = '.' then
-			exit
-		end if
-		p -= 1
-	end while
-
-	if p then
-		return {fname[1..p-1],fname[p+1..length(fname)]}
-	end if
-	
-	return fname
-end function
 
 
 
@@ -1506,6 +1498,7 @@ global procedure forthec_win32()
 	cases = 0
 	ifs = 0
 	usesConsole = 0
+	noFold = 0
 	fastfloat = 1
 	verbose = 0
 	noMangle = 0
@@ -1551,6 +1544,9 @@ global procedure forthec_win32()
 	if find("-nm",CMD) then
 		noMangle = 1
 	end if
+	if find("-nf",CMD) then
+		noFold = 1
+	end if
 
 	if find("-O0",CMD) then
 		optLevel = 0
@@ -1586,7 +1582,6 @@ global procedure forthec_win32()
 	outname = cut_filename(outname)
 	outname[2] = lower(outname[2])
 
-	outfile = open(outname[1]&".asm","wb")
 	dll = equal(outname[2],"dll") or (find("-dll",CMD) and (not equal(outname[2],"exe")))
 	if dll then
 		noMangle = 1
@@ -1607,10 +1602,26 @@ global procedure forthec_win32()
 	regs = repeat({0,0,0,0,0,0,0,0},2)
 	rstack = {}
 
-
+	forthec_init()
+	
 	t1 = time()
 	if parse(CMD[length(CMD)-1]) then end if
+
+	if optLevel>0 and not noFold then
+		optimise_token_stream()
+	end if
+	
 	if compile_win32() then end if
+
+	if errorCount then
+		printf(1,"Aborting with %d errors encountered\n",errorCount)
+		puts(1,"Press any key to abort..")
+		while get_key()=-1 do end while
+		abort(0)
+	end if
+
+	outfile = open(outname[1]&".asm","wb")
+	
 	if optLevel>0 then
 		if verbose then
 			puts(1,"Optimising\n")

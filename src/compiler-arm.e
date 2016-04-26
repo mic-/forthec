@@ -1,37 +1,8 @@
 -- ForthEC : A Forth compiler
--- /Mic, 2004/2005
+-- /Mic, 2004/2008
 --
--- 2005-01-02
--- * Added support for ARM processors.
+-- ARM code generator
 --
--- 2004-12-02
--- * Added more optimisation patterns.
--- * Most integer constants are now completly removed and replaced by immediate values.
--- * FPU code optimisations are now aborted after the first pass if no optimisations are
---   found (eg. if no FPU code is used).
---
--- 2004-11-29
--- * Added additional optimisation based on pattern matching.
---
--- 2004-04-18
--- * Added loop and conditional branch optimisation.
---
--- 2004-04-17
--- * Fixed a bug in loop and +loop.
--- * Implemented more words.
---
--- 2004-04-16
--- * Now removes duplicate floating point literals.
--- * Added floating point instruction optimisation.
--- * Split the compiler into modules.
---
--- 2004-04-15
--- * Added a simple code optimiser.
--- * Implemented more words.
---
--- 2004-04-14
--- * Added code to check if the file handle is valid in compile().
--- * Fixed a bug with nested while loops.
 
 
 without warning
@@ -63,7 +34,7 @@ include optimiser-arm.e
 
 
 
-
+-- Push a value on the parameter stack
 procedure PUSH_arm(atom a)
 	atom mask
 	integer hi,lo,ones
@@ -99,9 +70,6 @@ procedure PUSH_arm(atom a)
 				end if
 				mask += mask
 			end for
-			--if a=1028 then
-			--	? {ones,lo,hi}
-			--end if
 			if ones<=8 and (hi-lo)<8 then
 				ADD_CODE({sprintf("mov r0,#%d",a)},0)
 			else
@@ -128,12 +96,12 @@ procedure CMPI_arm(sequence cond,integer p)
 			ADD_CODE({"ldr r1,[r10],#4","cmp r1,r0","ldr r0,[r10],#4"},0)
 		elsif n=W_LEAVETRUE then
 			fastCmp = "b"&cond
-			--ADD_CODE({"pop eax","pop ecx","cmp ecx,eax"},0)
 			ADD_CODE({"ldr r1,[r10],#4","cmp r1,r0","ldr r0,[r10],#4"},0)
+		else
+			n = 0
 		end if
 	end if
 	if not n then
-		--ADD_CODE({"pop eax","xor ecx,ecx","cmp [esp],eax","set"&cond&" cl","neg ecx","mov [esp],ecx"},0)
 		ADD_CODE({"ldr r1,[r10],#4","mov r0,#0","cmp r0,r1","mov"&cond&" r0,#-1"},0)
 	end if
 end procedure
@@ -141,7 +109,7 @@ end procedure
 
 
 function compile_arm()
-	integer n,p,q,continue,lastComp,case,hasDefault,touch,optI
+	integer n,p,q,lastComp,case_,hasDefault,touch,optI
 	sequence s,t,token,wordId,loopStack,params,caseLbl,asm
 	
 	
@@ -150,7 +118,7 @@ function compile_arm()
 	end if
 	
 	lastComp = 0
-	case = -1
+	case_ = -1
 	loopStack = {}
 	touch = 1
 	fastCmp = ""
@@ -202,14 +170,19 @@ function compile_arm()
 						p += 1
 					end if
 				elsif tokens[p][1] = W_TOUCH then
+					if length(asm) then
+						ADD_CODE({asm},0)
+						asm = {}
+					end if
 					exit
 				elsif tokens[p][1] = NEWLINE then
 					if length(asm) then
-						if length(pendingWordDef) then
-							code = append(code,asm)
-						else
-							maincode = append(maincode,asm)
-						end if
+						--if length(pendingWordDef) then
+						--	code = append(code,asm)
+						--else
+						--	maincode = append(maincode,asm)
+						--end if
+						ADD_CODE({asm},0)
 						asm = {}
 					end if
 				elsif tokens[p][1] = W_CALL then
@@ -364,13 +337,13 @@ function compile_arm()
 						deferred = assoc_insert(tokens[p+1][2],make_label(tokens[p+1][2]),deferred)
 						p += 1
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 					
 		-- :
@@ -388,16 +361,16 @@ function compile_arm()
 							ADD_CODE({"str r14,[r11,#-4]!"},0)
 							p += 1
 						else
-							ERROR("Attempt to define a word within a word",tokens[p+1])
+							ERROR(ERROR_WORD_INSIDE_WORD,tokens[p+1])
 						end if
 					else
-						ERROR("Identifier is not unique",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR("Identifier is not unique",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		
@@ -409,7 +382,7 @@ function compile_arm()
 				n = 0
 				while 1 do
 					if p>length(tokens) then
-						ERROR("Unexpected end of file",tokens[p-1])
+						ERROR(ERROR_EOF,tokens[p-1])
 					elsif tokens[p][1] = UNKNOWN then
 						params = assoc_insert(tokens[p][2],{n},params)
 						n += 4
@@ -431,7 +404,7 @@ function compile_arm()
 					ADD_CODE({"mov ebp,esp"},0)
 				end if
 			else
-				ERROR("Use of { outside word definition",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 		
 		-- ;
@@ -442,14 +415,13 @@ function compile_arm()
 				if length(params[1]) then
 					ADD_CODE({"mov eax,ipstackptr","mov ecx,[eax+4]","add ipstackptr,8","mov ebp,[eax]","push ecx","ret"},0)
 				else
-					--ADD_CODE({"mov eax,ipstackptr","mov ecx,[eax]","add ipstackptr,4","push ecx","ret"},0)
 					ADD_CODE({"ldr r15,[r11],#4"},0)
 				end if
 				ADD_CODE({".pool"},0)
 				userWords = assoc_insert(pendingWordDef[2],wordId,userWords)
 				pendingWordDef = {}
 			else
-				ERROR("Use of ; with no corresponding :",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 
 		-- ;@
@@ -465,7 +437,7 @@ function compile_arm()
 				userWords = assoc_insert(pendingWordDef[2],wordId,userWords)
 				pendingWordDef = {}
 			else
-				ERROR("Use of ;@ with no corresponding :",tokens[p])
+				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 
 			
@@ -473,7 +445,7 @@ function compile_arm()
 		elsif tokens[p][1] = W_QUOTE then
 			n = bsearch(tokens[p+1][2],userWords[1])
 			if n then
-				ADD_CODE({"mov eax,offset "&userWords[2][n],"push eax"},0)
+				--ADD_CODE({"mov eax,offset "&userWords[2][n],"push eax"},0)
 				p += 1
 			end if
 			
@@ -586,11 +558,9 @@ function compile_arm()
 				ADD_CODE({"inc esi","cmp esi,edi","jne "&loopStack[length(loopStack)]},0)
 				optI = 0
 			else
-				--ADD_CODE({"mov eax,loopstackptr","sub eax,8","inc dword ptr [eax+4]","mov ecx,[eax]","cmp [eax+4],ecx","jne "&loopStack[length(loopStack)]},0)
 				ADD_CODE({"add r6,r6,#1","cmp r6,r7","bne "&loopStack[length(loopStack)]},0)
 			end if
 			ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
-			--ADD_CODE({"sub loopstackptr,8"},0)
 			ADD_CODE({"ldr r6,[r12],#4","ldr r7,[r12],#4"},0)
 			if length(loopStack) = 1 then
 				loopStack = {}
@@ -604,11 +574,9 @@ function compile_arm()
 				ADD_CODE({"pop eax","add esi,eax","cmp esi,edi","jne "&loopStack[length(loopStack)]},0)
 				optI = 0
 			else
-				--ADD_CODE({"mov eax,loopstackptr","pop ebx","sub eax,8","add [eax+4],ebx","mov ecx,[eax]","cmp [eax+4],ecx","jne "&loopStack[length(loopStack)]},0)
 				ADD_CODE({"add r6,r6,r0","ldr r0,[r10],#4","cmp r6,r7","bne "&loopStack[length(loopStack)]},0)
 			end if
 			ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
-			--ADD_CODE({"sub loopstackptr,8"},0)
 			ADD_CODE({"ldr r6,[r12],#4","ldr r7,[r12],#4"},0)
 			if length(loopStack) = 1 then
 				loopStack = {}
@@ -630,11 +598,10 @@ function compile_arm()
 			
 		-- CASE
 		elsif tokens[p][1] = W_CASE then
-			if case=-1 then
-				case = 0
+			if case_ = -1 then
+				case_ = 0
 				hasDefault = 0
 				caseLbl = sprintf("__case_%06x",cases)
-				--ADD_CODE({"pop dword ptr [caseVar]"},0)
 				ADD_CODE({"ldr r8,[r10],#4"},0)
 			else
 				ERROR("CASE inside CASE",tokens[p])
@@ -642,9 +609,8 @@ function compile_arm()
 		
 		-- OF
 		elsif tokens[p][1] = W_OF then
-			if case>=0 and not hasDefault then
-				--ADD_CODE({"pop eax","cmp eax,caseVar","jne "&caseLbl&sprintf("_%04x_false",case)},0)
-				ADD_CODE({"ldr r0,[r10],#4","cmp r0,r8","bne "&caseLbl&sprintf("_%04x_false",case)},0)
+			if case_>=0 and not hasDefault then
+				ADD_CODE({"ldr r0,[r10],#4","cmp r0,r8","bne "&caseLbl&sprintf("_%04x_false",case_)},0)
 			elsif hasDefault then
 				ERROR("OF found after DEFAULT",tokens[p])
 			else
@@ -653,19 +619,19 @@ function compile_arm()
 		
 		-- ENDOF
 		elsif tokens[p][1] = W_ENDOF then
-			if case>=0 then
+			if case_>=0 then
 				ADD_CODE({"b "&caseLbl&"_end"},0)
-				ADD_CODE({caseLbl&sprintf("_%04x_false:",case)},0)
-				case += 1
+				ADD_CODE({caseLbl&sprintf("_%04x_false:",case_)},0)
+				case_ += 1
 			else
 				ERROR("ENDOF outside CASE",tokens[p])
 			end if
 		
 		-- ENDCASE
 		elsif tokens[p][1] = W_ENDCASE then
-			if case>=0 then
+			if case_>=0 then
 				ADD_CODE({caseLbl&"_end:"},0)
-				case = -1
+				case_ = -1
 				cases += 1
 			else
 				ERROR("Unmatched ENDCASE",tokens[p])
@@ -673,7 +639,7 @@ function compile_arm()
 		
 		-- DEFAULT
 		elsif tokens[p][1] = W_DEFAULT then
-			if case>=0 then
+			if case_>=0 then
 				hasDefault = 1
 			else
 				ERROR("DEFAULT outside CASE",tokens[p])
@@ -696,14 +662,14 @@ function compile_arm()
 							--ADD_CODE({"pop eax","mov dword ptr ["&s&"],eax"},0)
 							p += 2
 						else
-							ERROR("Non-unique identifier",tokens[p+2])
+							ERROR(ERROR_REDECLARED,tokens[p+2])
 							p += 2
 						end if
 					else
-						ERROR("Found constant inside word definition",tokens[p])				
+						ERROR(ERROR_CONST_INSIDE_WORD,tokens[p])				
 					end if
 				else
-					ERROR("Unexpected end of file",tokens[p])
+					ERROR(ERROR_EOF,tokens[p])
 				end if
 			end if
 			
@@ -723,14 +689,14 @@ function compile_arm()
 						--ADD_CODE({"pop eax","mov dword ptr ["&s&"],eax"},0)
 						p += 1
 					else
-						ERROR("Non-unique identifier",tokens[p+1])
+						ERROR(ERROR_REDECLARED,tokens[p+1])
 						p += 1
 					end if
 				else
-					ERROR("Found constant inside word definition",tokens[p])				
+					ERROR(ERROR_CONST_INSIDE_WORD,tokens[p])				
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 		
@@ -740,15 +706,14 @@ function compile_arm()
 				if tokens[p+1][1]=UNKNOWN and bsearch(tokens[p+1][2],variables[1])=0 then
 					s = sprintf("var_%07x",length(variables[1]))
 					variables = assoc_insert(tokens[p+1][2],{s,4},variables)
-					--ADD_CODE({"mov eax,dictptr","mov "&s&",eax","add dictptr,4"},0)
 					ADD_CODE({"ldr r1,="&s,"str r9,[r1]","add r9,r9,#4"},0)
 					p += 1
 				else
-					ERROR("Non-unique identifier",tokens[p+1])
+					ERROR(ERROR_REDECLARED,tokens[p+1])
 					p += 1
 				end if
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 
 			
@@ -903,7 +868,7 @@ function compile_arm()
 					loopStack = loopStack[1..length(loopStack)-1]
 				end if
 			else
-				ERROR("REPEAT with no matching BEGIN",tokens[p])
+				ERROR(ERROR_NO_BEGIN,tokens[p])
 			end if
 		-- ROT
 		--elsif tokens[p][1] = W_ROT then
@@ -980,7 +945,7 @@ function compile_arm()
 				literals = append(literals,{sprintf("lit_%06x",length(literals)),".asciz \""&s&"\""})
 				ADD_CODE({"str r0,[r10,#-4]!","ldr r0,="&literals[length(literals)][1]},0)
 			else
-				ERROR("Unexpected end of file",tokens[p])
+				ERROR(ERROR_EOF,tokens[p])
 			end if
 			
 		elsif tokens[p][1] = UNKNOWN then
@@ -1038,7 +1003,7 @@ function compile_arm()
 			end if
 			
 			if not n then
-				ERROR("Undefined word",tokens[p])
+				ERROR(ERROR_UNDECLARED,tokens[p])
 			end if
 		else
 			ERROR("Unsupported word",tokens[p])
@@ -1046,6 +1011,14 @@ function compile_arm()
 
 		p += 1
 	end while
+
+	if length(pendingWordDef) then
+		ERROR(ERROR_OPEN_WORD,pendingWordDef)
+	end if
+	
+	if length(loopStack) then
+		ERROR(ERROR_OPEN_DO,tokens[p-1])
+	end if
 	
 	return 0
 end function
@@ -1076,7 +1049,7 @@ global procedure forthec_arm()
 	march = ""
 	crt0 = "crt0.o"
 	gccend = "-EL"
-	entry = "_start"
+	entrypoint = "_start"
 	fentry = "_main"
 	nofpu = ""
 
@@ -1147,7 +1120,7 @@ global procedure forthec_arm()
 		mcpu = ""
 	end if
 	if find("-entry",CMD) then
-		entry = CMD[find("-entry",CMD)+1]
+		entrypoint = CMD[find("-entry",CMD)+1]
 	end if
 	if find("-fentry",CMD) then
 		fentry = CMD[find("-fentry",CMD)+1]
@@ -1240,7 +1213,17 @@ global procedure forthec_arm()
 		optimise_token_stream()
 	end if
 
+	count_refs()
+	
 	if compile_arm() then end if
+
+	if errorCount then
+		printf(1,"Aborting with %d errors encountered\n",errorCount)
+		puts(1,"Press any key to abort..")
+		while get_key()=-1 do end while
+		abort(0)
+	end if
+	
 	if optLevel>0 then
 		if verbose then
 			puts(1,"Optimising\n")
@@ -1344,7 +1327,7 @@ global procedure forthec_arm()
 			puts(1,"\nAssembling\n")
 		end if
 		system(dkarmdir&"\\bin\\arm-elf-as "&mcpu&" "&march&" "&gccend&" "&nofpu&" -o"&outname[1]&".o "&outname[1]&".asm",2)
-		system(dkarmdir&"\\bin\\arm-elf-ld -T "&lscript&" "&gccend&" -e "&entry&" "&crt0&" "&outname[1]&".o"&morefiles,2)
+		system(dkarmdir&"\\bin\\arm-elf-ld -T "&lscript&" "&gccend&" -e "&entrypoint&" "&crt0&" "&outname[1]&".o"&morefiles,2)
 		system(dkarmdir&"\\bin\\arm-elf-objcopy -O binary a.out "&outname[1]&".bin",2)
 
 		system("del "&outname[1]&".asm",2)

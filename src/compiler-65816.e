@@ -1,13 +1,13 @@
 -- ForthEC : A Forth compiler
--- /Mic, 2004/2009
+-- /Mic, 2004/2013
 --
--- M68000 code generator
+-- 65C816 code generator
 --
 
 
 without warning
 include forthec.e
-include optimiser-m68k.e
+include optimiser-65816.e
 
 
 	
@@ -30,6 +30,18 @@ include optimiser-m68k.e
 -- a6  Link register
 -- a7  -
 
+-- New layout
+-------------
+-- a	Work register
+-- bc	TOS
+-- de	Return stack
+-- hl	Work register
+-- sp	Parameter stack
+-- bc'	Loop stack
+-- de'	Loop counter
+-- hl'	Loop limit
+-- ix	Link register
+-- iy	Dictionary pointer
 
 --###########################################################################################
 
@@ -38,17 +50,13 @@ include optimiser-m68k.e
 
 
 -- Push a value on the parameter stack
-procedure PUSH_68k(atom a)
-	atom mask
-	integer hi,lo,ones
-	
-	ADD_CODE({"move.l d0,-(a2)"},0)
-	ADD_CODE({sprintf("move.l #%d,d0",a)},0)
+procedure PUSH_65816(atom a)	
+	ADD_CODE({sprintf("pea.w %d",a)},0)
 end procedure
 
 
 -- Handle comparison operations
-procedure CMPI_68k(sequence cond,integer p)
+procedure CMPI_65816(sequence cond,integer p)
 	integer n
 	
 	n = 0
@@ -71,12 +79,14 @@ procedure CMPI_68k(sequence cond,integer p)
 			elsif equal(fastCmp,"bnge") then
 				fastCmp = "blt"
 			end if
-			ADD_CODE({"move.l d0,d1","move.l (a2)+,d2","move.l (a2)+,d0","cmp.l d1,d2"},0)
+			ADD_CODE({"pla", "sta __forthec_zp00", "pla", "cmp __forthec_zp00"}, 0)
+			--ADD_CODE({"move.l d0,d1","move.l (a2)+,d2","move.l (a2)+,d0","cmp.l d1,d2"},0)
 
 		-- Is the next token ?LEAVE ?
 		elsif n=W_LEAVETRUE then
 			fastCmp = "b"&cond
-			ADD_CODE({"move.l d0,d1","move.l (a2)+,d2","move.l (a2)+,d0","cmp.l d1,d2"},0)
+			--ADD_CODE({"move.l d0,d1","move.l (a2)+,d2","move.l (a2)+,d0","cmp.l d1,d2"},0)
+			ADD_CODE({"pla", "sta __forthec_zp00", "pla", "cmp __forthec_zp00"}, 0)
 		
 		else
 			n = 0
@@ -85,13 +95,15 @@ procedure CMPI_68k(sequence cond,integer p)
 	
 	-- The general case
 	if not n then
-		ADD_CODE({"move.l (a2)+,d1","cmp.l d1,d0","s"&cond&" d0","ext.w d0","ext.l d0"},0)
+		--ADD_CODE({"move.l (a2)+,d1","cmp.l d1,d0","s"&cond&" d0","ext.w d0","ext.l d0"},0)
+		ADD_CODE({"ldy #-1", "pla", "sta __forthec_zp00", "pla", "cmp __forthec_zp00", "b"&cond&" +", "ldy #0",
+		          "+:", "phy"}, 0)
 	end if
 end procedure
 
 
 
-function compile_m68k()
+function compile_65816()
 	integer n,p,q,lastComp,case_,hasDefault,touch,optI
 	sequence s,t,token,wordId,loopStack,loopStacks,params,caseLbl,asm,context
 	
@@ -139,7 +151,7 @@ function compile_m68k()
 	while p<=length(tokens) do
 		if tokens[p][1] = NUMBER then
 			if p=length(tokens) or tokens[p+1][1]!=W_CONST then
-				PUSH_68k(tokens[p][2])
+				PUSH_65816(tokens[p][2])
 			end if
 			
 			
@@ -198,25 +210,37 @@ function compile_m68k()
 				p += 1
 			end while
 			
-		-- SP0
-		--elsif tokens[p][1] = W_SPBOT then
-		--	ADD_CODE({"push dword ptr [stackBase]"},0)
-		
-		-- SP@
-		--elsif tokens[p][1] = W_SPTOP then
-		--	ADD_CODE({"push esp"},0)
 			
 		-- !
 		elsif tokens[p][1] = W_STORE then
-			ADD_CODE({"move.l (a2)+,(a0,d0)","move.l (a2)+,d0"},0)
+			--ADD_CODE({"lda 4,s", "ldy #0", "sta (2,s),y", "iny", "iny", "lda 6,s", "sta (2,s),y", "pla", "pla", "pla"},0)
+			ADD_CODE({"lda 4,s", "ldy #0", "sta (2,s),y", "pla", "pla"},0)
 
 		-- c!
 		elsif tokens[p][1] = W_CSTORE then
-			ADD_CODE({"move.b (a2)+,(a0,d0)","addq.l #3,a2","move.l (a2)+,d0"},0)
+			--ADD_CODE({"move.b (a2)+,(a0,d0)","addq.l #3,a2","move.l (a2)+,d0"},0)
+			ADD_CODE({"lda 4,s", "ldy #0", "sep #$20", "sta (2,s),y", "rep #$20", "pla", "pla"},0)
+
+		-- c!l
+		elsif tokens[p][1] = W_CSTOREL then
+			--ADD_CODE({"move.b (a2)+,(a0,d0)","addq.l #3,a2","move.l (a2)+,d0"},0)
+			--ADD_CODE({"pop hl","ld a,l","ld (bc),a","pop bc"},0)
+			ADD_CODE({"pla", "sta __forthec_zp00", "pla", "sta __forthec_zp02", "pla", "sep #$20", "sta [__forthec_zp00]",
+			          "rep #$20"}, 0)
+
+		-- c!li
+		elsif tokens[p][1] = W_CSTORELI then
+			ADD_CODE({"ply", "pla", "sta __forthec_zp00", "pla", "sta __forthec_zp02", "pla", "sep #$20",
+				  "sta [__forthec_zp00],y", "rep #$20"}, 0)
 
 		-- w!
 		elsif tokens[p][1] = W_WSTORE then
-			ADD_CODE({"move.w (a2)+,(a0,d0)","addq.l #2,a2","move.l (a2)+,d0"},0)
+			--ADD_CODE({"move.w (a2)+,(a0,d0)","addq.l #2,a2","move.l (a2)+,d0"},0)
+			ADD_CODE({"lda 4,s", "ldy #0", "sta (2,s),y", "pla", "pla"},0)
+
+		-- w!l
+		elsif tokens[p][1] = W_WSTOREL then
+			ADD_CODE({"pla", "sta __forthec_zp00", "pla", "sta __forthec_zp02", "pla", "sta [__forthec_zp00]"}, 0)
 
 		-- !r+
 		elsif tokens[p][1] = W_STORE_R_INC then
@@ -224,29 +248,54 @@ function compile_m68k()
 
 		-- ON
 		elsif tokens[p][1] = W_ON then
-			ADD_CODE({"move.l #-1,(a0,d0)","move.l (a2)+,d0"},0)
+			--ADD_CODE({"move.l #-1,(a0,d0)","move.l (a2)+,d0"},0)
+			ADD_CODE({"ld a,255","ld (bc),a","inc bc","ld (bc),a","pop bc"},0)
 		
 		-- OFF
 		elsif tokens[p][1] = W_OFF then
-			ADD_CODE({"move.l #0,(a0,d0)","move.l (a2)+,d0"},0)
+			ADD_CODE({"ld a,0","ld (bc),a","inc bc","ld (bc),a","pop bc"},0)
 			
 		-- @
 		elsif tokens[p][1] = W_FETCH then
-			ADD_CODE({"move.l (a0,d0),d0"},0)
+			ADD_CODE({"ldy #0", "lda (2,s),y", "sta 2,s"}, 0)
 		-- @+
 		elsif tokens[p][1] = W_FETCHADD then
 			ADD_CODE({"move.l d0,d1","move.l (a0,d1),d0","addq.l #4,d1","move.l d1,-(a2)"},0)
 
 		-- c@
 		elsif tokens[p][1] = W_CFETCH then
-			ADD_CODE({"move.b (a0,d0),d0","and.l #255,d0"},0)
+			--ADD_CODE({"move.b (a0,d0),d0","and.l #255,d0"},0)
+			ADD_CODE({"ldy #0", "sep #$20", "lda (2,s),y", "rep #$20", "and #255", "sta 2,s"}, 0)
+			--ADD_CODE({"ld a,(bc)","ld c,a","ld b,0"},0)
+
+		-- c@l
+		elsif tokens[p][1] = W_CFETCHL then
+			--ADD_CODE({"move.b (a0,d0),d0","and.l #255,d0"},0)
+			--ADD_CODE({"ld a,(bc)","ld c,a","ld b,0"},0)
+			ADD_CODE({"pla", "sta __forthec_zp00", "pla", "sta __forthec_zp02", "sep #$20", "lda [__forthec_zp00]",
+			          "rep #$20", "and #255", "pha"}, 0)
+
+		-- c@li
+		elsif tokens[p][1] = W_CFETCHLI then
+			ADD_CODE({"ply", "pla", "sta __forthec_zp00", "pla", "sta __forthec_zp02", "sep #$20", "lda [__forthec_zp00],y",
+			          "rep #$20", "and #255", "pha"}, 0)
+
+		-- c@]i
+		elsif tokens[p][1] = W_CFETCHILI then
+			--ADD_CODE({"move.b (a0,d0),d0","and.l #255,d0"},0)
+			ADD_CODE({"ld a,(bc)","ld c,a","ld b,0"},0)
+
+		-- c@+
+		elsif tokens[p][1] = W_CFETCHADD then
+			ADD_CODE({"ld a,(bc)","inc bc","push bc","ld c,a","ld b,0"},0)
+
 		-- cs@
 		elsif tokens[p][1] = W_CSFETCH or
 		      tokens[p][1] = W_SCFETCH then
 			ADD_CODE({"move.b (a0,d0),d0","ext.w d0","ext.l d0"},0)
 		-- w@
 		elsif tokens[p][1] = W_WFETCH then
-			ADD_CODE({"move.w (a0,d0),d0","and.l #65535,d0"},0)
+			ADD_CODE({"ldy #0", "lda (2,s),y", "sta 2,s"}, 0)
 
 		-- w@+
 		elsif tokens[p][1] = W_WFETCHADD then
@@ -259,60 +308,67 @@ function compile_m68k()
 
 		-- +
 		elsif tokens[p][1] = W_ADD then
-			ADD_CODE({"move.l (a2)+,d1","add.l d1,d0"},0)
+			ADD_CODE({"pla", "clc", "adc 2,s","sta 2,s"},0)
 
 		-- -
 		elsif tokens[p][1] = W_SUB then
-			ADD_CODE({"move.l (a2)+,d1","sub.l d0,d1","move.l d1,d0"},0)
+			--ADD_CODE({"move.l (a2)+,d1","sub.l d0,d1","move.l d1,d0"},0)
+			--ADD_CODE({"pop hl","and a","sbc hl,bc","ld c,l","ld b,h"},0)
+			ADD_CODE({"pla", "sta __forthec_zp00", "pla", "sec", "sbc __forthec_zp00", "pha"}, 0)
 
 		-- *
 		elsif tokens[p][1] = W_MUL then
-			ADD_CODE({"move.l (a2)+,d1","muls d1,d0"},0)
+			--ADD_CODE({"move.l (a2)+,d1","muls d1,d0"},0)
 			
 		-- /
 		elsif tokens[p][1] = W_DIV then
-			ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","divs d1,d0","ext.l d0"},0)
+		--	ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","divs d1,d0","ext.l d0"},0)
 		-- MOD
 		elsif tokens[p][1] = W_MOD then
-			ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","divs d1,d0","swap d0","ext.l d0"},0)
+		--	ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","divs d1,d0","swap d0","ext.l d0"},0)
 		-- /MOD
 		elsif tokens[p][1] = W_DIVMOD then
-			ADD_CODE({"move.l d0,d1","move.l (a2),d0","divs d1,d0","move.l d0,d1","ext.l d0","swap d1","ext.l d1","move.l d1,(a2)"},0)
+		--	ADD_CODE({"move.l d0,d1","move.l (a2),d0","divs d1,d0","move.l d0,d1","ext.l d0","swap d1","ext.l d1","move.l d1,(a2)"},0)
 
 		
 		-- /C
 		elsif tokens[p][1] = W_CSIZE then
-			PUSH_68k(1)
+			PUSH_65816(1)
 
 		-- /F
 		elsif tokens[p][1] = W_FSIZE then
-			PUSH_68k(8)
+			PUSH_65816(8)
 
 		-- /N
 		elsif tokens[p][1] = W_NSIZE then
-			PUSH_68k(4)
+			PUSH_65816(2)
 			
 		-- 1-
 		elsif tokens[p][1] = W_DEC then
-			ADD_CODE({"subq.l #1,d0"},0)
+			ADD_CODE({"pla", "dea", "pha"},0)
 		-- 1+
 		elsif tokens[p][1] = W_INC then
-			ADD_CODE({"addq.l #1,d0"},0)
+			ADD_CODE({"pla", "ina", "pha"},0)
 			
 		-- 2*
 		elsif tokens[p][1] = W_MUL2 then
-			ADD_CODE({"add.l d0,d0"},0)
+			ADD_CODE({"pla","asl a","pha"},0)
 
 		-- 2/
 		elsif tokens[p][1] = W_DIV2 then
-			ADD_CODE({"asr.l #1,d0"},0)
+			--ADD_CODE({"asr.l #1,d0"},0)
+			ADD_CODE({"srl b","rr c"},0)
 		
 		-- <<
 		elsif tokens[p][1] = W_SHL then
-			ADD_CODE({"move.l (a2)+,d1","lsl.l d0,d1","move.l d1,d0"},0)
+			--ADD_CODE({"move.l (a2)+,d1","lsl.l d0,d1","move.l d1,d0"},0)
+			ADD_CODE({"ply", "pla", "-:", "cpy #0", "beq +", "asl a", "dey", "bra -", "+:", "pha"}, 0)
+			--ADD_CODE({"ld a,c","pop bc","-:","cp 0","jr z,+","sla c","rl b","dec a","jr -"},0)
+			
 		-- >>
 		elsif tokens[p][1] = W_SHR then
-			ADD_CODE({"move.l (a2)+,d1","lsr.l d0,d1","move.l d1,d0"},0)
+			--ADD_CODE({"move.l (a2)+,d1","lsr.l d0,d1","move.l d1,d0"},0)
+			ADD_CODE({"ply", "pla", "-:", "cpy #0", "beq +", "lsr a", "dey", "bra -", "+:", "pha"}, 0)
 		
 		-- BOUNDS
 		elsif tokens[p][1] = W_BOUNDS then
@@ -336,21 +392,19 @@ function compile_m68k()
 			end if
 					
 		-- :
-		elsif tokens[p][1] = W_COLON then
+		elsif tokens[p][1] = W_COLON or tokens[p][1] = W_COLONIRQ then 
 			if p<length(tokens) then
 				if tokens[p+1][1]=UNKNOWN then
-					if not bsearch(tokens[p+1][2],userWords[1]) then  
+					if not bsearch(tokens[p+1][2],userWords[1]) then 
 						if not length(pendingWordDef) then
-							--pendingWordDef = tokens[p+1]
-							--params = {{},{}}
-							--ADD_CODE({NL&"/* "&tokens[p+1][2]&" */"},0)
-							--wordId = make_label(tokens[p+1][2]) 
-							--ADD_CODE({wordId&":"},0)
-							--ADD_CODE({"move.l a6,-(a3)"},0)
-							--p += 1
-							--loopStacks = loopStack
-							--loopStack = {}
-
+--							pendingWordDef = tokens[p+1]
+--							params = {{},{}}
+--							ADD_CODE({NL&"; "&tokens[p+1][2]},0)
+--							wordId = make_label(tokens[p+1][2]) 
+--							ADD_CODE({wordId&":"},0)
+--							p += 1
+--							loopStacks = loopStack
+--							loopStack = {}
 
 							if (referred[2][bsearch(tokens[p+1][2],referred[1])][1]<2) and
 							   (q<=0) and
@@ -363,11 +417,11 @@ function compile_m68k()
 								q = p+2
 								n = 1
 								while q < length(tokens) do
-									if tokens[q][1] = W_REPEAT or tokens[q][1] = W_UNTIL or
+									if tokens[q][1] = W_REPEAT or --tokens[q][1] = W_UNTIL or
 									   tokens[q][1] = W_PARAMSTART or tokens[q][1] = W_CASE then
 										inline = 0
 										exit
-									elsif tokens[q][1] = W_BEGIN or tokens[q][1] = W_DO then
+									elsif tokens[q][1] = W_DO then --or tokens[q][1] = W_BEGIN
 										inline = 0
 										exit
 									elsif tokens[q][1] = W_SEMICOLON then
@@ -382,7 +436,7 @@ function compile_m68k()
 										end if
 									end if
 									q += 1
-									if q-p >9 then
+									if q-p >15 then
 										inline = 0
 										exit
 									end if
@@ -396,19 +450,20 @@ function compile_m68k()
 							params = {{},{}}
 			
 							q = bsearch(tokens[p+1][2],publics[1])
-							if (referred[2][bsearch(tokens[p+1][2],referred[1])][1]<=4) and
+							if (referred[2][bsearch(tokens[p+1][2],referred[1])][1]<=7) and
 							   (q<=0) and
 							   (not noMangle) and
 							   inline then
 								ignoreOutput = 1
 								wordId = tokens[p+1][2]
 								--pendingWordDef &= 1
-							else
-								inline = 0
 							end if
 							
+							if not ignoreOutput then
+								inline = 0
+							end if
 							if not inline then
-								ADD_CODE({NL&"/* "&tokens[p+1][2]&" */"},0)
+								ADD_CODE({NL&"; "&tokens[p+1][2]},0)
 							
 								if q<=0 then
 									wordId = make_label(tokens[p+1][2])
@@ -416,15 +471,20 @@ function compile_m68k()
 									wordId = tokens[p+1][2]
 								end if
 								ADD_CODE({wordId&":"},0)
-								ADD_CODE({"move.l a6,-(a3)"},0)
+								ADD_CODE({"ldy __forthec_rstackpos ;enter", "pla", "sta [__forthec_rstack],y",
+								          "iny", "iny", "sep #$20", "pla", "sta [__forthec_rstack],y",
+								          "iny", "rep #$20", "sty __forthec_rstackpos"}, 0)
+								--ADD_CODE({"p2 += -4;","r0 = rets;","[p2] = r0;"},0)
+		
 
+								--loopStacks = loopStack
 								context = {ifStack,loopStack}
 								ifStack = {}
 								loopStack = {}
 							end if
 							
 							p += 1
-							
+
 						else
 							ERROR(ERROR_WORD_INSIDE_WORD,tokens[p+1])
 						end if
@@ -484,14 +544,18 @@ function compile_m68k()
 					--	ADD_CODE({"mov eax,ipstackptr","mov ecx,[eax+4]","add ipstackptr,8","mov ebp,[eax]","push ecx","ret"},0)
 					else
 						--ADD_CODE({"mov eax,ipstackptr","mov ecx,[eax]","add ipstackptr,4","push ecx","ret"},0)
-						ADD_CODE({"move.l (a3)+,a6","jmp (a6)"},0)
+						--ADD_CODE({"move.l (a3)+,a6","jmp (a6)"},0)
+						--ADD_CODE({"ld l,(ix+0)","ld h,(ix+1)","inc ix","inc ix","jp (hl)"},0)
+						--ADD_CODE({"ld a,(de)","ld l,a","inc de","ld a,(de)","ld h,a","inc de","jp (hl)"},0)
+						ADD_CODE({"ldy __forthec_rstackpos ;exit", "dey", "sep #$20", "lda [__forthec_rstack],y",
+						          "pha", "dey", "dey", "sty __forthec_rstackpos", "rep #$20",
+						          "lda [__forthec_rstack],y", "pha", "rtl"}, 0)
 					end if
-					--ADD_CODE({".pool"},0)
 					userWords = assoc_insert(pendingWordDef[2],{wordId,0},userWords)
-					pendingWordDef = {}
 					if length(loopStack) then
 						ERROR(ERROR_OPEN_DO,tokens[p])
 					end if
+					--loopStack = loopStacks
 					ifStack = context[1]
 					loopStack = context[2]
 					context = {}
@@ -500,10 +564,56 @@ function compile_m68k()
 				inlinecode = {}
 				pendingWordDef = {}
 				ignoreOutput = 0
+				
 			else
 				ERROR(ERROR_NO_COLON,tokens[p])
 			end if
 
+		-- ;i
+		elsif tokens[p][1] = W_SEMICOLONI then
+			if length(pendingWordDef)=3 then
+				ADD_CODE({wordId&"_return:"},0)
+				if length(params[1]) then
+				--	ADD_CODE({"mov eax,ipstackptr","mov ecx,[eax+4]","add ipstackptr,8","mov ebp,[eax]","push ecx","ret"},0)
+				else
+					--ADD_CODE({"move.l (a3)+,a6","jmp (a6)"},0)
+					--ADD_CODE({"ld l,(ix+0)","ld h,(ix+1)","inc ix","inc ix","push hl","reti"},0)
+					ADD_CODE({"ld a,(de)","ld l,a","inc de","ld a,(de)","ld h,a","inc de","push hl","reti"},0)
+				end if
+				--ADD_CODE({".pool"},0)
+				userWords = assoc_insert(pendingWordDef[2],{wordId,0},userWords)
+				pendingWordDef = {}
+				if length(loopStack) then
+					ERROR(ERROR_OPEN_DO,tokens[p])
+				end if
+				loopStack = loopStacks
+			else
+				ERROR(ERROR_NO_COLON,tokens[p])
+			end if
+
+		-- ;n
+		elsif tokens[p][1] = W_SEMICOLONN then
+			if length(pendingWordDef)=3 then
+				ADD_CODE({wordId&"_return:"},0)
+				if length(params[1]) then
+				--	ADD_CODE({"mov eax,ipstackptr","mov ecx,[eax+4]","add ipstackptr,8","mov ebp,[eax]","push ecx","ret"},0)
+				else
+					--ADD_CODE({"mov eax,ipstackptr","mov ecx,[eax]","add ipstackptr,4","push ecx","ret"},0)
+					--ADD_CODE({"move.l (a3)+,a6","jmp (a6)"},0)
+					--ADD_CODE({"ld l,(ix+0)","ld h,(ix+1)","inc ix","inc ix","push hl","retn"},0)
+					ADD_CODE({"ld a,(de)","ld l,a","inc de","ld a,(de)","ld h,a","inc de","push hl","retn"},0)
+				end if
+				--ADD_CODE({".pool"},0)
+				userWords = assoc_insert(pendingWordDef[2],{wordId,0},userWords)
+				pendingWordDef = {}
+				if length(loopStack) then
+					ERROR(ERROR_OPEN_DO,tokens[p])
+				end if
+				loopStack = loopStacks
+			else
+				ERROR(ERROR_NO_COLON,tokens[p])
+			end if
+			
 		-- ;@
 		elsif tokens[p][1] = W_SEMICOLONPOP then
 			if length(pendingWordDef)=3 then
@@ -520,6 +630,8 @@ function compile_m68k()
 				ERROR("Use of ;@ with no corresponding :",tokens[p])
 			end if
 
+		elsif tokens[p][1] = W_SETINT then
+			ADD_CODE({"; set interrupt handler"},0)
 			
 		-- '
 		elsif tokens[p][1] = W_QUOTE then
@@ -532,32 +644,33 @@ function compile_m68k()
 			
 		-- =
 		elsif tokens[p][1] = W_EQ then
-			CMPI_68k("eq",p)
+			CMPI_65816("eq",p)
 			
 		-- <>
 		elsif tokens[p][1] = W_NE then
-			CMPI_68k("ne",p)
+			CMPI_65816("ne",p)
 		
 		-- >
 		elsif tokens[p][1] = W_GT then
-			CMPI_68k("gt",p)
+			CMPI_65816("gt",p)
 		-- >=
 		elsif tokens[p][1] = W_GE then
-			CMPI_68k("ge",p)
+			CMPI_65816("cs",p)
 
 		-- <
 		elsif tokens[p][1] = W_LT then
-			CMPI_68k("lt",p)
+			CMPI_65816("cc",p)
 		-- <=
 		elsif tokens[p][1] = W_LE then
-			CMPI_68k("le",p)
+			CMPI_65816("le",p)
 
 		-- 0=
 		elsif tokens[p][1] = W_EQ0 then
-			ADD_CODE({"cmp.l #0,d0","seq d0","ext.w d0","ext.l d0"},0)
+			--ADD_CODE({"cmp.l #0,d0","seq d0","ext.w d0","ext.l d0"},0)
+			ADD_CODE({"ldy #0", "pla", "bne +", "ldy #$FFFF", "+:", "phy"}, 0) 
 		-- 0<>
 		elsif tokens[p][1] = W_NE0 then
-			ADD_CODE({"cmp.l #0,d0","sne d0","ext.w d0","ext.l d0"},0)
+			ADD_CODE({"ldy #0", "pla", "beq +", "ldy #$FFFF", "+:", "phy"}, 0) 
 		-- 0>
 		elsif tokens[p][1] = W_GT0 then
 			ERROR("Unimplemented word",tokens[p])
@@ -568,7 +681,7 @@ function compile_m68k()
 
 		-- NEGATE
 		elsif tokens[p][1] = W_NEG then
-			ADD_CODE({"neg.l d0"},0)
+			ADD_CODE({"eor #$FFFF", "ina"},0)
 			
 
 		-- ABS
@@ -578,11 +691,15 @@ function compile_m68k()
 		-- ALLOT
 		elsif tokens[p][1] = W_ALLOT then
 			ADD_CODE({"add.l d0,a1","move.l (a2)+,d0"},0)
+
+		-- ZPALLOT
+		elsif tokens[p][1] = W_ZPALLOT then
+			ADD_CODE({"add.l d0,a1","move.l (a2)+,d0"},0)
 			
 		-- AND
 		elsif tokens[p][1] = W_AND then
-			ADD_CODE({"move.l (a2)+,d1","and.l d1,d0"},0)
-
+			ADD_CODE({"pla", "and 2,s", "sta 2,s"}, 0)
+			
 		-- BEGIN
 		elsif tokens[p][1] = W_BEGIN then
 			s = sprintf("__loop_%04x",loops)
@@ -605,9 +722,12 @@ function compile_m68k()
 					n = 1
 					while tokens[q][1]!=W_LOOP and tokens[q][1]!=W_INCLOOP do
 						if tokens[q][1]=UNKNOWN then
-							if bsearch(tokens[q][2],userWords[1]) then
-								n = 0
-								exit
+							p1 = bsearch(tokens[q][2],userWords[1])
+							if p1 then
+								if userWords[2][p1][2] = 0 then -- not an inlined word
+									n = 0
+									exit
+								end if
 							elsif bsearch(tokens[q][2],deferred[1]) then
 								n = 0
 								exit
@@ -621,20 +741,31 @@ function compile_m68k()
 					end while
 				end if
 			end if
-			
-			ADD_CODE({"move.l d7,-(a4)","move.l d6,-(a4)","move.l (a2)+,d7","move.l d0,d6","move.l (a2)+,d0"},0)
+
+			if n then
+				optI = 1
+				ADD_CODE({"lda __forthec_lstackpos", "clc", "adc #4", "sta __forthec_lstackpos", "plx", "pla",
+					  "sta __forthec_looplim"}, 0)
+			else
+				ADD_CODE({"lda __forthec_lstackpos", "clc", "adc #4", "tay", "pla", "sta [__forthec_lstack],y",
+					  "sty __forthec_lstackpos", "iny", "iny", "pla", "sta [__forthec_lstack],y",
+					  "iny", "iny", "sty __forthec_lstackpos"}, 0)
+			end if
 			ADD_CODE({s&":"},0)
 
 		-- LOOP
 		elsif tokens[p][1] = W_LOOP then
 			if optI then
-				--ADD_CODE({"inc esi","cmp esi,edi","jne "&loopStack[length(loopStack)]},0)
+				ADD_CODE({"inx", "cpx __forthec_looplim",
+				          "bne "&loopStack[length(loopStack)]}, 0)
 				optI = 0
 			else
-				ADD_CODE({"addq.l #1,d6","cmp.l d7,d6","bne "&loopStack[length(loopStack)]},0)				
+				ADD_CODE({"ldy __forthec_lstackpos", "lda [__forthec_lstack],y", "ina", "sta [__forthec_lstack],y",
+				          "sta __forthec_zp00", "iny", "iny", "lda [__forthec_lstack],y", "cpx __forthec_zp00",
+				          "bne "&loopStack[length(loopStack)]}, 0)
 			end if
 			ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
-			ADD_CODE({"move.l (a4)+,d6","move.l (a4)+,d7"},0)
+			ADD_CODE({"lda __forthec_lstackpos", "sec", "sbc #4", "sta __forthec_lstackpos"}, 0)
 			if length(loopStack) = 1 then
 				loopStack = {}
 			else
@@ -644,7 +775,8 @@ function compile_m68k()
 		-- +LOOP
 		elsif tokens[p][1] = W_INCLOOP then
 			if optI then
-				--ADD_CODE({"pop eax","add esi,eax","cmp esi,edi","jne "&loopStack[length(loopStack)]},0)
+				ADD_CODE({"stx __forthec_zp00", "pla", "clc", "adc __forthec_zp00", "tax", "cpx __forthec_looplim",
+				          "bne "&loopStack[length(loopStack)]}, 0)
 				optI = 0
 			else
 				ADD_CODE({"add.l d0,d6","move.l (a2)+,d0","cmp d7,d6","bne "&loopStack[length(loopStack)]},0)
@@ -660,17 +792,17 @@ function compile_m68k()
 		-- I
 		elsif tokens[p][1] = W_I then
 			if optI then
-				--ADD_CODE({"push esi"},0)
+				ADD_CODE({"phx"},0)
 			else
-				ADD_CODE({"move.l d0,-(a2)","move.l d6,d0"},0)
+				ADD_CODE({"ldy __forthec_lstackpos", "lda [__forthec_lstack],y", "pha"},0)
 			end if
 		-- J
 		elsif tokens[p][1] = W_J then
-			ADD_CODE({"move.l d0,-(a2)","move.l (a4),d0"},0)
+			ADD_CODE({"lda __forthec_lstackpos", "sec", "sbc #4", "tay", "lda [__forthec_lstack],y", "pha"},0)
 			
 		-- CASE
 		elsif tokens[p][1] = W_CASE then
-			if case_=-1 then
+			if case_ = -1 then
 				case_ = 0
 				hasDefault = 0
 				caseLbl = sprintf("__case_%06x",cases)
@@ -683,7 +815,7 @@ function compile_m68k()
 		-- OF
 		elsif tokens[p][1] = W_OF then
 			if case_>=0 and not hasDefault then
-				ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","cmp.l d5,d1","bne "&caseLbl&sprintf("_%04x_false",case_)},0)
+				ADD_CODE({"move.l (a2)+,d0","cmp.l d5,d0","bne "&caseLbl&sprintf("_%04x_false",case_)},0)
 			elsif hasDefault then
 				ERROR("OF found after DEFAULT",tokens[p])
 			else
@@ -692,7 +824,7 @@ function compile_m68k()
 		
 		-- ENDOF
 		elsif tokens[p][1] = W_ENDOF then
-			if case_>=0 then
+			if case_ >= 0 then
 				ADD_CODE({"bra "&caseLbl&"_end"},0)
 				ADD_CODE({caseLbl&sprintf("_%04x_false:",case_)},0)
 				case_ += 1
@@ -702,7 +834,7 @@ function compile_m68k()
 		
 		-- ENDCASE
 		elsif tokens[p][1] = W_ENDCASE then
-			if case_>=0 then
+			if case_ >= 0 then
 				ADD_CODE({caseLbl&"_end:"},0)
 				case_ = -1
 				cases += 1
@@ -712,7 +844,7 @@ function compile_m68k()
 		
 		-- DEFAULT
 		elsif tokens[p][1] = W_DEFAULT then
-			if case_>=0 then
+			if case_ >= 0 then
 				hasDefault = 1
 			else
 				ERROR("DEFAULT outside CASE",tokens[p])
@@ -776,7 +908,7 @@ function compile_m68k()
 					s = sprintf("var_%07x",length(variables[1]))
 					variables = assoc_insert(tokens[p+1][2],{s,4},variables)
 					--ADD_CODE({"ldr r1,="&s,"str r9,[r1]","add r9,r9,#4"},0)
-					ADD_CODE({"move.l #"&s&",a5","move.l a1,(a5)","addq.l #4,a1"},0)
+					--ADD_CODE({"move.l #"&s&",a5","move.l a1,(a5)","addq.l #4,a1"},0)
 					p += 1
 				else
 					ERROR(ERROR_REDECLARED,tokens[p+1])
@@ -786,7 +918,22 @@ function compile_m68k()
 				ERROR(ERROR_EOF,tokens[p])
 			end if
 
-			
+		elsif tokens[p][1] = W_ZPVAR then
+			if length(tokens)>p then
+				if tokens[p+1][1]=UNKNOWN and bsearch(tokens[p+1][2],variables[1])=0 then
+					s = sprintf("var_%07x",length(variables[1]))
+					variables = assoc_insert(tokens[p+1][2],{s,4,"zp"},variables)
+					--ADD_CODE({"ldr r1,="&s,"str r9,[r1]","add r9,r9,#4"},0)
+					--ADD_CODE({"move.l #"&s&",a5","move.l a1,(a5)","addq.l #4,a1"},0)
+					p += 1
+				else
+					ERROR(ERROR_REDECLARED,tokens[p+1])
+					p += 1
+				end if
+			else
+				ERROR(ERROR_EOF,tokens[p])
+			end if
+		
 		-- BYE
 		elsif tokens[p][1] = W_BYE then
 		
@@ -811,18 +958,24 @@ function compile_m68k()
 		--elsif tokens[p][1] = W_CALL then
 		--	ADD_CODE({"call "&tokens[p+1][2]},0)
 		--	p += 1
+
+		-- CALLI
+		elsif tokens[p][1] = W_CALLI then
+			--ADD_CODE({"pop ax","call near ax"},0)
+			ADD_CODE({"ld hl,bc","pop bc","call __forthec_call_hl"},0)
+
 			
 		-- DROP
 		elsif tokens[p][1] = W_DROP then
-			ADD_CODE({"move.l (a2)+,d0"},0)
+			ADD_CODE({"pla"},0)
 
 		-- 2DROP
 		elsif tokens[p][1] = W_2DROP then
-			ADD_CODE({"add r10,r10,#4","ldr r0,[r10],#4"},0)
+			ADD_CODE({"pop bc","pop bc"},0)
 			
 		-- DUP
 		elsif tokens[p][1] = W_DUP then
-			ADD_CODE({"move.l d0,-(a2)"},0)
+			ADD_CODE({"lda 2,s", "pha"},0)
 		-- 2DUP
 		elsif tokens[p][1] = W_2DUP then
 			ADD_CODE({"mov r2,r0","ldr r1,[r10]","stmfd r10!,{r1,r2}"},0)
@@ -844,7 +997,8 @@ function compile_m68k()
 
 		-- OVER
 		elsif tokens[p][1] = W_OVER then
-			ADD_CODE({"move.l (a2),d1","move.l d0,-(a2)","move.l d1,d0"},0)
+			--ADD_CODE({"move.l (a2),d1","move.l d0,-(a2)","move.l d1,d0"},0)
+			ADD_CODE({"lda 4,s", "pha"}, 0)
 			
 		-- ELSE
 		elsif tokens[p][1] = W_ELSE then
@@ -900,12 +1054,13 @@ function compile_m68k()
 				ADD_CODE({fastCmp&" "&ifStack[1]},0)
 				fastCmp = ""
 			else
-				ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","cmp.l #-1,d1","bne "&ifStack[1]},0)
+				--ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","cmp.l #-1,d1","bne "&ifStack[1]},0)
+				ADD_CODE({"pla", "cmp #-1", "bne "&ifStack[1]}, 0)
 			end if
 			
 		-- LEAVE
 		elsif tokens[p][1] = W_LEAVE then
-			ADD_CODE({"bra "&loopStack[length(loopStack)]&"_end"},0)
+			ADD_CODE({"jmp "&loopStack[length(loopStack)]&"_end"},0)
 		-- ?LEAVE
 		elsif tokens[p][1] = W_LEAVETRUE then
 			if length(fastCmp) then
@@ -917,17 +1072,18 @@ function compile_m68k()
 			
 		-- NULL
 		elsif tokens[p][1] = W_NULL or tokens[p][1]=W_FALSE then
-			PUSH_68k(0)
+			PUSH_65816(0)
 		-- TRUE
 		elsif tokens[p][1] = W_TRUE then
-			PUSH_68k(-1)
+			PUSH_65816(-1)
 		-- BL
 		elsif tokens[p][1] = W_BL then
-			PUSH_68k(' ')
+			PUSH_65816(' ')
 		
 		-- OR
 		elsif tokens[p][1] = W_OR then
-			ADD_CODE({"move.l (a2)+,d1","or.l d1,d0"},0)
+			--ADD_CODE({"pop hl","ld a,c","or l","ld c,a","ld a,b","or h","ld b,a"},0)
+			ADD_CODE({"pla", "ors 2,s", "sta 2,s"}, 0)
 
 		-- REPEAT
 		elsif tokens[p][1] = W_REPEAT then
@@ -948,7 +1104,8 @@ function compile_m68k()
 
 		-- SWAP
 		elsif tokens[p][1] = W_SWAP then
-			ADD_CODE({"move.l (a2),d1","move.l d0,(a2)","move.l d1,d0"},0)
+			--ADD_CODE({"move.l (a2),d1","move.l d0,(a2)","move.l d1,d0"},0)
+			ADD_CODE({"pla","ply","pha","phy"},0)
 			
 		-- THEN
 		elsif tokens[p][1] = W_THEN then
@@ -969,7 +1126,7 @@ function compile_m68k()
 			if not length(loopStack) then
 				ERROR("Unmatched AGAIN",tokens[p])
 			else
-				ADD_CODE({"bra "&loopStack[length(loopStack)],"nop"},0)
+				ADD_CODE({"bra "&loopStack[length(loopStack)]},0)
 				ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
 				if length(loopStack) = 1 then
 					loopStack = {}
@@ -983,7 +1140,8 @@ function compile_m68k()
 			if not length(loopStack) then
 				ERROR("Unmatched UNTIL",tokens[p])
 			else
-				ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","cmp.l #-1,d1","bne "&loopStack[length(loopStack)]},0)
+				ADD_CODE({"pla", "cmp #$FFFF", "bne "&loopStack[length(loopStack)]}, 0)
+				--ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","cmp.l #-1,d1","bne "&loopStack[length(loopStack)]},0)
 				ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
 				if length(loopStack) = 1 then
 					loopStack = {}
@@ -1003,7 +1161,9 @@ function compile_m68k()
 			
 		-- XOR
 		elsif tokens[p][1] = W_XOR then
-			ADD_CODE({"move.l (a2)+,d1","eor.l d1,d0"},0)
+			--ADD_CODE({"move.l (a2)+,d1","eor.l d1,d0"},0)
+			--ADD_CODE({"pop hl","ld a,l","xor c","ld c,a","ld a,h","xor b","ld b,a"},0)
+			ADD_CODE({"pla", "eor 2,s", "sta 2,s"}, 0)
 		
 		-- Z"
 		elsif tokens[p][1] = W_ZSTRING then
@@ -1026,8 +1186,8 @@ function compile_m68k()
 						ERROR("Unexpected end of file",tokens[p-1])
 					end if
 				end while
-				literals = append(literals,{sprintf("lit_%06x",length(literals)),".asciz \""&s&"\""})
-				ADD_CODE({"move.l d0,-(a2)","move.l #"&literals[length(literals)][1]&",d0"},0)
+				literals = append(literals,{sprintf("lit_%06x",length(literals)),".db \""&s&"\",0"})
+				ADD_CODE({"pea.w :"&literals[length(literals)][1], "pea.w "&literals[length(literals)][1]},0)
 			else
 				ERROR(ERROR_EOF,tokens[p])
 			end if
@@ -1036,13 +1196,17 @@ function compile_m68k()
 			n = bsearch(tokens[p][2],userWords[1])
 			if n then
 				if userWords[2][n][2] then
-					ADD_CODE({"/* Inlined word "&tokens[p][2]&" */"},0)
+					ADD_CODE({"; Inlined word "&tokens[p][2]},0)
 					ADD_CODE(inlines[userWords[2][n][3]],0)
 				else
+					ADD_CODE({"jsl "&userWords[2][n][1]},0)
 					s = sprintf("__ret_%04x",calls)
 					calls += 1
-					ADD_CODE({"lea "&s&",a6","bra "&userWords[2][n][1],s&":"},0)
-				end if
+					--ADD_CODE({"lea "&s&",a6","bra "&userWords[2][n],s&":"},0)
+					--ADD_CODE({"ld hl,"&s,"ld (ix+0),l","ld (ix+1),h","inc ix","inc ix","jp "&userWords[2][n],s&":"},0)
+					--ADD_CODE({"dec ix","dec ix","ld (ix+0),"&s&"%256","ld (ix+1),"&s&"/256","jp "&userWords[2][n],s&":"},0)
+					--ADD_CODE({"ex de,hl","dec hl","ld (hl),>"&s,"dec hl","ld (hl),<"&s,"ex de,hl","jp "&userWords[2][n][1],s&":"},0)
+				end if				
 			end if
 			
 			if not n then
@@ -1057,7 +1221,11 @@ function compile_m68k()
 			if not n then
 				n = bsearch(tokens[p][2],variables[1])
 				if n then
-					ADD_CODE({"move.l d0,-(a2)","move.l #"&variables[2][n][1]&",d0"},0)
+					--ADD_CODE({"move.l d0,-(a2)","move.l #"&variables[2][n][1]&",d0"},0)
+					if length(variables[2][n]) != 3 then
+						ADD_CODE({"pea.w :"&variables[2][n][1]}, 0)
+					end if
+					ADD_CODE({"pea.w "&variables[2][n][1]}, 0)
 				end if
 			end if
 			
@@ -1069,7 +1237,7 @@ function compile_m68k()
 						constants[2][n][2] = 1	-- Mark the constant as being used
 					else
 						--ADD_CODE({"str r0,[r10,#-4]!","ldr r0,="&sprintf("%d",constants[2][n][4])},0)
-						PUSH_68k(constants[2][n][4])
+						PUSH_65816(constants[2][n][4])
 					end if
 				end if
 			end if
@@ -1087,7 +1255,9 @@ function compile_m68k()
 				if n then
 					s = sprintf("__ret_%04x",calls)
 					calls += 1
-					ADD_CODE({"lea "&s&",a6","bra "&deferred[2][n]&" /* deferred */",s&":"},0)
+					--ADD_CODE({"lea "&s&",a6","bra "&deferred[2][n]&" /* deferred */",s&":"},0)
+					--ADD_CODE({"dec ix","dec ix","ld (ix+0),"&s&"%256","ld (ix+1),"&s&"/256","jp "&deferred[2][n]&" ; deferred",s&":"},0)
+					ADD_CODE({"ex de,hl","dec hl","ld (hl),"&s&"/256","dec hl","ld (hl),"&s&"%256","ex de,hl","jp "&deferred[2][n]&" ; deferred",s&":"},0)
 				end if
 			end if
 			
@@ -1116,7 +1286,7 @@ end function
 
 
 
-global procedure forthec_m68k()
+global procedure forthec_65816()
 	sequence dkarmdir,mcpu,gccend,march
 	sequence asmOpts,linkOpts,crt0,lscript
 	integer nofiles
@@ -1154,19 +1324,15 @@ global procedure forthec_m68k()
 	end if
 	
 	if nofiles then
-		puts(1,"forthec -t m68k [options] <infile> <outfile>\n\n")
+		puts(1,"forthec -t 65816 [options] <infile> <outfile>\n\n")
 		puts(1,"Options:\n\n")
 		puts(1,"-O<n>\t\tOptimisation level (n=0 min, n=6 max)\n")
 		puts(1,"-nm\t\tNo name mangling\n")
-		puts(1,"-cpu <name>\tSpecify target cpu (m68000)\n")
-		--puts(1,"-arch <name>\tSpecify target architechture (armv4)\n")
-		--puts(1,"-eb\t\tBig-endian\n")
-		--puts(1,"-el\t\tLittle-endian (default)\n")
-		--puts(1,"-nofpu\t\tDisable fpu code generation\n")
+		--puts(1,"-cpu <name>\tSpecify target cpu (m68000)\n")
 		--puts(1,"-entry <name>\tOverride default entrypoint symbol (_start)\n")
 		puts(1,"-fentry <name>\tOverride default forth entrypoint symbol (main)\n")
-		puts(1,"-crt0 <name>\tOverride default crt0 filename (crt0.o)\n")
-		puts(1,"-ls <name>\tOverride default linkscript filename (md.ld)\n")
+		--puts(1,"-crt0 <name>\tOverride default crt0 filename (crt0.o)\n")
+		--puts(1,"-ls <name>\tOverride default linkscript filename (md.ld)\n")
 		puts(1,"-v\t\tVerbose compilation\n")
 		puts(1,"\nPress any key to quit..")
 		while get_key()=-1 do end while
@@ -1272,7 +1438,7 @@ global procedure forthec_m68k()
 		end if
 		close(cfgfile)
 	end if
-	puts(1,dkarmdir&{13,10})
+
 
 	outname = CMD[infpos+1]
 	outname = cut_filename(outname)
@@ -1292,7 +1458,7 @@ global procedure forthec_m68k()
 	
 	count_refs()
 	
-	if compile_m68k() then end if
+	if compile_65816() then end if
 	
 	if errorCount then
 		printf(1,"Aborting with %d errors encountered\n",errorCount)
@@ -1307,15 +1473,16 @@ global procedure forthec_m68k()
 		if verbose then
 			puts(1,"Optimising\n")
 		end if
-		maincode = optimise_m68k(maincode,1)
-		code = optimise_m68k(code,0)
+		maincode = optimise_65816(maincode, 1)
+		code = optimise_65816(code, 0)
 	end if
 
 
-	puts(outfile,"# Generated by ForthEC"&NL&NL)
-	puts(outfile,NL&"##############################################################################"&NL&NL)
+	puts(outfile,"; Generated by ForthEC"&NL&NL)
+	puts(outfile,NL&";##############################################################################"&NL&NL)
 
-
+	puts(outfile,".orga $0000"&NL&"di"&NL&"jp "&fentry&NL)
+	
 	-- Write data
 	puts(outfile,".data"&NL)
 	for i=1 to length(literals) do
@@ -1323,12 +1490,12 @@ global procedure forthec_m68k()
 	end for
 
 	-- Write constants
-	puts(outfile,".bss"&NL)
-	puts(outfile,".even"&NL)
+	--puts(outfile,".bss"&NL)
+	--puts(outfile,".even"&NL)
 	for i=1 to length(constants[2]) do
 		if constants[2][i][2] or optLevel=0 then
 			puts(outfile,"\t"&constants[2][i][1]&":"&NL)
-			puts(outfile,"\t\tdc.l 0"&NL)
+			puts(outfile,"\t\t.dw 0"&NL)
 		end if
 	end for
 
@@ -1336,33 +1503,41 @@ global procedure forthec_m68k()
 	-- Write variables
 	for i=1 to length(variables[2]) do
 		--if variables[2][i][2] = 4 then
-			--puts(outfile,"\t"&variables[2][i][1]&" dd ?"&NL)
-			puts(outfile,"\t"&variables[2][i][1]&":"&NL)
-			puts(outfile,"\t\tdc.l 0"&NL)
+			if length(variables[2][i]) != 3 then
+				puts(outfile,"\t"&variables[2][i][1]&":"&NL)
+				puts(outfile,"\t\t.dw 0"&NL)
+			end if
 		--else
 		--	puts(outfile,"\t"&variables[2][i][1]&" dq ?"&NL)
 		--end if
 	end for
 
-	puts(outfile,NL&"##############################################################################"&NL&NL)
+	puts(outfile,NL&";##############################################################################"&NL&NL)
 
 	-- Write code section
-	puts(outfile,".text"&NL&".globl "&fentry&NL&".even"&NL)
+	--puts(outfile,".text"&NL&".globl "&fentry&NL&".even"&NL)
 	for i=1 to length(code) do
 		puts(outfile,code[i]&NL)
 	end for
 
-	puts(outfile,NL&"##############################################################################"&NL&NL)
+	puts(outfile,NL&";##############################################################################"&NL&NL)
 
 	-- Set up address registers
 	puts(outfile,fentry&":"&NL)
-	puts(outfile,   "move.l #0xffffff,a7"&NL&	-- regular stack (interrupts etc)
-	                "move.l #0xfffe00,a2"&NL&	-- parameter stack
-	                "move.l #0xfff000,a3"&NL&	-- return stack
-	                "move.l #0xffec00,a4"&NL&	-- loop stack
-	                "move.l #0xff8000,a1"&NL&	-- "dictionary"
-	                "move.l #0,a0"&NL
-	                )
+	--puts(outfile,   "move.l #0xffffff,a7"&NL&	-- regular stack (interrupts etc)
+	--                "move.l #0xfffe00,a2"&NL&	-- parameter stack
+	--                "move.l #0xfff000,a3"&NL&	-- return stack
+	--                "move.l #0xffec00,a4"&NL&	-- loop stack
+	--                "move.l #0xff8000,a1"&NL&	-- "dictionary"
+	--                "move.l #0,a0"&NL
+	--                )
+	puts(outfile,"ld sp,$dff0"&NL&	-- parameter stack		
+	             "ld de,$d200"&NL&	-- return stack
+	             "ld iy,$c200"&NL&	-- "dictionary"
+	             "exx"&NL&
+	             "ld bc,$d100"&NL&	-- loop stack
+	             "exx"&NL
+	             )
 
 
 	for i=1 to length(maincode) do

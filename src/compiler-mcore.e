@@ -1,23 +1,23 @@
 -- ForthEC : A Forth compiler
--- /Mic, 2004/2008
+-- /Mic, 2004/2005
 --
--- SuperH code generator
+-- M*CORE code generator
 --
 
 without warning
 include forthec.e
-include optimiser-sh.e
+include optimiser-mcore.e
 
 
 	
 -- Register use:
 ----------------
--- r0  TOS
--- r1  Work register
+-- r0  Regular stack
+-- r1  TOS
 -- r2  -"-
 -- r3 
 -- r4
--- r5
+-- r5  
 -- r6  Loop counter
 -- r7  Loop limit
 -- r8  Case variable
@@ -27,97 +27,11 @@ include optimiser-sh.e
 -- r12 Loop stack
 -- r13 Named parameter base
 -- r14 
--- r15 Regular stack
-
-
--- Signed division for SH processors
--- args in r1 and r0, result in r0 clobber r1,r2,r3
-constant sdiv_code =
-{
-"__sdiv:",
-	"tst r0,r0",
-	"bt __sdiv_div0",
-	"mov #0,r2",
-	"div0s r2,r1",
-	"subc r3,r3",
-	"subc r2,r1",
-	"div0s r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"div1 r0,r3",
-	"rotcl r1",
-	"addc r2,r1",
-	"rts",
-	"mov r1,r0",
-"__sdiv_div0: rts",
-	"mov #0,r0"
-}
+-- r15 Link register
 
 
 
--- Function used for creating literals, to cope with the GNU SH assembler's
--- inability to automatically handle literal pools.
+
 function add_literal(object o)
 	integer p
 	
@@ -138,49 +52,50 @@ function add_literal(object o)
 end function
 
 
--- Push a value of the parameter stack
-procedure PUSH_sh(atom a)
-	atom mask
-	integer hi,lo,ones,p
-	
-	ADD_CODE({"mov.l r0,@-r10"},0)
-	if a>=-128 and a<256 then
-		ADD_CODE({sprintf("mov #%d,r0",and_bits(a,#FF))},0)
-		if a>127 then
-			ADD_CODE({"extu.b r0,r0"},0)
-		end if
+
+procedure PUSH_mcore(atom a)
+	ADD_CODE({"subi r10,4","stw r1,(r10)"},0)
+	if a>=0 and a<128 then
+		ADD_CODE({sprintf("movi r1,%d",a)},0)
 	else
-		p = find(a,immliterals[1])
-		if p then
-			ADD_CODE({"mov.l "&literals[immliterals[2][p]][1]&",r0"},0)
-		else
-			literals = append(literals,{sprintf("lit_%06x_%d",{length(literals)+globLit,length(pendingWordDef)}),sprintf(".long %d",a)})
-			immliterals[1] &= a
-			immliterals[2] &= length(literals)
-			ADD_CODE({"mov.l "&literals[length(literals)][1]&",r0"},0)
-		end if
+		ADD_CODE({sprintf("lrw r1,%d",a)},0)
 	end if
+	
 end procedure
 
 
--- Handle comparison operations
-procedure CMPI_sh(sequence cond,integer p)
+procedure CMPI_mcore(sequence cond,integer p)
 	integer n
 	
 	n = 0
 	if p<length(tokens) and optLevel>=4 then
 		n = tokens[p+1][1]
 		if n=W_IF or n=W_WHILE then
-			if equal(cond,"le") then
-				fastCmp = "bt"
-				cond = "gt"
-			elsif equal(cond,"lt") then
-				fastCmp = "bt"
-				cond = "ge"
+			--fastCmp = "bn"&cond
+			--if equal(fastCmp,"bnne") then
+			--	fastCmp = "beq"
+			--elsif equal(fastCmp,"bneq") then
+			--	fastCmp = "bne"
+			--elsif equal(fastCmp,"bnlt") then
+			--	fastCmp = "bge"
+			--elsif equal(fastCmp,"bnle") then
+			--	fastCmp = "bgt"
+			--elsif equal(fastCmp,"bngt") then
+			--	fastCmp = "ble"
+			--elsif equal(fastCmp,"bnge") then
+			--	fastCmp = "blt"
+			--end if
+			if equal(cond,">") then
+				fastCmp = "cc"
+				cond = "<="
+			elsif equal(cond,">=") then
+				fastCmp = "cc"
+				cond = "<"
 			else
-				fastCmp = "bf"
+				fastCmp = "!cc"
 			end if
-			ADD_CODE({"mov r0,r1","mov.l @r10+,r2","mov.l @r10+,r0","cmp/"&cond&" r1,r2"},0)
+			ADD_CODE({"r1 = r0;","r2 = [p1++];","r0 = [p1++];","cc = r2 "&cond&" r1;"},0)
+			--ADD_CODE({"mov r0,r1","mov.l @r10+,r2","mov.l @r10+,r0","cmp/"&cond&" r1,r2"},0)
 		elsif n=W_LEAVETRUE then
 			fastCmp = "bt"
 			ADD_CODE({"mov r0,r1","mov.l @r10+,r2","mov.l @r10+,r0","cmp/"&cond&" r1,r2"},0)
@@ -195,9 +110,9 @@ end procedure
 
 
 
-function compile_sh()
+function compile_mcore()
 	integer n,p,q,r,lastComp,case_,hasDefault,touch,optI
-	sequence s,t,token,wordId,loopStack,loopStacks,params,caseLbl,asm,litBackup
+	sequence s,t,token,wordId,loopStack,loopStacks,params,caseLbl,asm,litBackup,context
 	
 	
 	if verbose then
@@ -242,7 +157,8 @@ function compile_sh()
 	while p<=length(tokens) do
 		if tokens[p][1] = NUMBER then
 			if p=length(tokens) or tokens[p+1][1]!=W_CONST then
-				PUSH_sh(tokens[p][2])
+				tokens[p] &= get_code_length()+1
+				PUSH_mcore(tokens[p][2])
 			end if
 			
 			
@@ -257,19 +173,18 @@ function compile_sh()
 						p += 1
 					end if
 				elsif tokens[p][1] = W_TOUCH then
-					if length(asm) then
-						ADD_CODE({asm},0)
-						asm = {}
-					end if
 					exit
 				elsif tokens[p][1] = NEWLINE then
 					if length(asm) then
-						ADD_CODE({asm},0)
+						if length(pendingWordDef) then
+							code = append(code,asm)
+						else
+							maincode = append(maincode,asm)
+						end if
 						asm = {}
 					end if
 				elsif tokens[p][1] = W_CALL then
 					asm &= "call"
-
 				elsif tokens[p][1] = UNKNOWN then
 					if equal(lower(tokens[p][2]),"includelib") then
 						if not find(tokens[p+1][2],includes) then
@@ -331,16 +246,16 @@ function compile_sh()
 			
 		-- @
 		elsif tokens[p][1] = W_FETCH then
-			ADD_CODE({"mov.l @r0,r0"},0)
+			ADD_CODE({"ldw r1,(r1)"},0)
 		-- c@
 		elsif tokens[p][1] = W_CFETCH then
-			ADD_CODE({"mov.b @r0,r0","extu.b r0,r0"},0)
+			ADD_CODE({"ldb r1,(r1)"},0)
 		-- cs@
 		elsif tokens[p][1] = W_CSFETCH then
-			ADD_CODE({"mov.b @r0,r0"},0)
+			ADD_CODE({"ldb r1,(r1)","sextb r1"},0)
 		-- w@
 		elsif tokens[p][1] = W_WFETCH then
-			ADD_CODE({"mov.w @r0,r0","extu.w r0,r0"},0)
+			ADD_CODE({"ldh r1,(r1)"},0)
 	
 		-- a@
 		--elsif tokens[p][1] = W_ACCFETCH then
@@ -349,25 +264,25 @@ function compile_sh()
 
 		-- wa+
 		elsif tokens[p][1] = W_ADRPLUSW then
-			ADD_CODE({"mov.l @r10+,r1","shll r0","add r1,r0"},0)
+			--ADD_CODE({"ldw r2,(r10)","addi r10,4"},0)
 			
 		-- +
 		elsif tokens[p][1] = W_ADD then
-			ADD_CODE({"mov.l @r10+,r1","add r1,r0"},0)
+			ADD_CODE({"ldw r2,(r10)","addu r1,r2","addi r10,4"},0)
 
 		-- -
 		elsif tokens[p][1] = W_SUB then
-			ADD_CODE({"mov.l @r10+,r1","sub r0,r1","mov r1,r0"},0)
+			ADD_CODE({"r1 = [p1++];","r0 = r1 - r0;"},0)
 
 		-- *
 		elsif tokens[p][1] = W_MUL then
-			ADD_CODE({"move.l (a2)+,d1","muls d1,d0"},0)
+			ADD_CODE({"r1 = [p1++];","r0 *= r1;"},0)
 			
 		-- /
 		elsif tokens[p][1] = W_DIV then
 			usesDiv = 1
 			ADD_CODE({"mov.l @r10+,r1","bsr __sdiv","nop"},0)
-
+			--ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","divs d1,d0","ext.l d0"},0)
 		-- MOD
 		elsif tokens[p][1] = W_MOD then
 			--ADD_CODE({"move.l d0,d1","move.l (a2)+,d0","divs d1,d0","swap d0","ext.l d0"},0)
@@ -380,54 +295,46 @@ function compile_sh()
 		
 		-- /C
 		elsif tokens[p][1] = W_CSIZE then
-			PUSH_sh(1)
+			PUSH_mcore(1)
 
 		-- /F
 		elsif tokens[p][1] = W_FSIZE then
-			PUSH_sh(8)
+			PUSH_mcore(8)
 
 		-- /N
 		elsif tokens[p][1] = W_NSIZE then
-			PUSH_sh(4)
+			PUSH_mcore(4)
 			
 		-- 1-
 		elsif tokens[p][1] = W_DEC then
-			ADD_CODE({"sub #1,r0"},0)
+			ADD_CODE({"subi r1,1"},0)
 		-- 1+
 		elsif tokens[p][1] = W_INC then
-			ADD_CODE({"add #1,r0"},0)
+			ADD_CODE({"addi r1,1"},0)
 			
 		-- 2*
 		elsif tokens[p][1] = W_MUL2 then
-			ADD_CODE({"add r0,r0"},0)
+			ADD_CODE({"addu r1,r1"},0)
 
 		-- 2/
 		elsif tokens[p][1] = W_DIV2 then
-			ADD_CODE({"shar r0"},0)
+			ADD_CODE({"asri r1,1"},0)
 		
 		-- <<
 		elsif tokens[p][1] = W_SHL then
 			if p>1 then
 				if tokens[p-1][1]=NUMBER then
-					ADD_CODE({"mov.l @r10+,r0"},0)
-					q = tokens[p-1][2]
-					while q>=16 do
-						ADD_CODE({"shll16 r0"},0)
-						q -= 16
-					end while
-					while q>=8 do
-						ADD_CODE({"shll8 r0"},0)
-						q -= 8
-					end while
-					while q>=2 do
-						ADD_CODE({"shll2 r0"},0)
-						q -= 2
-					end while
-					while q>=1 do
-						ADD_CODE({"shll r0"},0)
-						q -= 1
-					end while
+					n = get_code_length()
+					ADD_CODE({"ldw r1,(r10)"},0)
+					ADD_CODE({sprintf("lsli r1,%d",tokens[p-1][2])},0)
+					if length(tokens[p-1])=4 then
+						REMOVE_CODE(tokens[p-1][4],n+1)
+					else
+						ADD_CODE({"addi r10,4"},0)
+					end if
 				else
+					ADD_CODE({"ldw r2,(r10)"},0)
+					ADD_CODE({"lsl r2,r1","addu r10,4","mov r1,r2"},0)				
 				end if
 			else
 				ERROR("Unexpected token",tokens[p])
@@ -437,25 +344,15 @@ function compile_sh()
 		elsif tokens[p][1] = W_SHR then
 			if p>1 then
 				if tokens[p-1][1]=NUMBER then
-					ADD_CODE({"mov.l @r10+,r0"},0)
-					q = tokens[p-1][2]
-					while q>=16 do
-						ADD_CODE({"shlr16 r0"},0)
-						q -= 16
-					end while
-					while q>=8 do
-						ADD_CODE({"shlr8 r0"},0)
-						q -= 8
-					end while
-					while q>=2 do
-						ADD_CODE({"shlr2 r0"},0)
-						q -= 2
-					end while
-					while q>=1 do
-						ADD_CODE({"shlr r0"},0)
-						q -= 1
-					end while
+					n = get_code_length()
+					ADD_CODE({"r0 = [p1++];"},0)
+					ADD_CODE({sprintf("r0 >>= %d;",tokens[p-1][2])},0)
+					if length(tokens[p-1])=4 then
+						REMOVE_CODE(tokens[p-1][4],n+1)
+					end if
 				else
+					ADD_CODE({"r1 = [p1++];"},0)
+					ADD_CODE({"r1 >>= r0;","r0 = r1;"},0)
 				end if
 			else
 				ERROR("Unexpected token",tokens[p])
@@ -477,7 +374,7 @@ function compile_sh()
 						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR(ERROR_REDECLARED,tokens[p+1])
+					ERROR(ERROR_EXPECTED_ID,tokens[p+1])
 				end if
 			else
 				ERROR(ERROR_EOF,tokens[p])
@@ -487,7 +384,12 @@ function compile_sh()
 		elsif tokens[p][1] = W_COLON then
 			if p<length(tokens) then
 				if tokens[p+1][1]=UNKNOWN then
-					if not bsearch(tokens[p+1][2],userWords[1]) then  --WORDS) then
+					n = lookup_symbol(tokens[p+1][token_VALUE])
+					if symtab[lex_DATA][n][symbol_TAG] = SYM_UNDEF then
+					--if not (bsearch(tokens[p+1][2],userWords[1]) or
+					--        bsearch(tokens[p+1][2],variables[1]) and
+					--        bsearch(tokens[p+1][2],constants[1])) then
+						symtab[lex_DATA][n][symbol_TAG] = SYM_WORD
 						if not length(pendingWordDef) then
 							q = bsearch(tokens[p+1][2],publics[1])
 							if (referred[2][bsearch(tokens[p+1][2],referred[1])][1]<2) and
@@ -497,7 +399,7 @@ function compile_sh()
 							end if
 							pendingWordDef = tokens[p+1]
 							params = {{},{}}
-							ADD_CODE({NL&"! "&tokens[p+1][2]},0)
+							ADD_CODE({NL&"# "&tokens[p+1][2]},0)
 							
 							if q<=0 then
 								wordId = make_label(tokens[p+1][2])
@@ -505,12 +407,14 @@ function compile_sh()
 								wordId = tokens[p+1][2]
 							end if
 							ADD_CODE({wordId&":"},0)
-							ADD_CODE({"sts.l pr,@-r11"},0)
-							
-							litBackup = {literals,immliterals}
-							literals = {}
-							immliterals = {{},{}}
-	
+							--ADD_CODE({"sts.l pr,@-r11"},0)
+							ADD_CODE({"subi r11,4","stw r15,(r11)"},0)
+							--litBackup = {literals,immliterals}
+							--literals = {}
+							--immliterals = {{},{}}
+							context = {ifStack,loopStack}
+							ifStack = {}
+							loopStack = {}
 							p += 1
 						else
 							ERROR(ERROR_WORD_INSIDE_WORD,tokens[p+1])
@@ -519,7 +423,7 @@ function compile_sh()
 						ERROR(ERROR_REDECLARED,tokens[p+1])
 					end if
 				else
-					ERROR(ERROR_REDECLARED,tokens[p+1])
+					ERROR(ERROR_EXPECTED_ID,tokens[p+1])
 				end if
 			else
 				ERROR(ERROR_EOF,tokens[p])
@@ -568,16 +472,22 @@ function compile_sh()
 					ADD_CODE({"mov.l @r11+,r14","mov.l @r11+,r13","lds.l @r11+,pr","rts","nop"},0)
 				else
 					--ADD_CODE({"mov eax,ipstackptr","mov ecx,[eax]","add ipstackptr,4","push ecx","ret"},0)
-					ADD_CODE({"lds.l @r11+,pr","rts","nop"},0)
+					--ADD_CODE({"r1 = [p2++];","rets = r1;","rts;"},0)
+					--ADD_CODE({"lds.l @r11+,pr","rts","nop"},0)
+					ADD_CODE({"ldw r15,(r11)","addi r11,4","jmp r15"},0)
 				end if
 
-				for i=1 to length(literals) do
-					ADD_CODE({".align 2",literals[i][1]&": "&literals[i][2]},0)
-				end for
-				globLit += length(literals)
-				literals = litBackup[1]
-				immliterals = litBackup[2]
-				litBackup = {}
+				--for i=1 to length(literals) do
+				--	ADD_CODE({".align 2",literals[i][1]&": "&literals[i][2]},0)
+				--end for
+				--globLit += length(literals)
+				--literals = litBackup[1]
+				--immliterals = litBackup[2]
+				--litBackup = {}
+				
+				ifStack = context[1]
+				loopStack = context[2]
+				context = {}
 				
 				userWords = assoc_insert(pendingWordDef[2],wordId,userWords)
 				pendingWordDef = {}
@@ -601,59 +511,58 @@ function compile_sh()
 			
 		-- =
 		elsif tokens[p][1] = W_EQ then
-			CMPI_sh("eq",p)
+			CMPI_mcore("==",p)
 			
 		-- <>
 		elsif tokens[p][1] = W_NE then
-			CMPI_sh("ne",p)
+			CMPI_mcore("!=",p)
 		
 		-- >
 		elsif tokens[p][1] = W_GT then
-			CMPI_sh("gt",p)
+			CMPI_mcore(">",p)
 		-- >=
 		elsif tokens[p][1] = W_GE then
-			CMPI_sh("ge",p)
+			CMPI_mcore(">=",p)
 
 		-- <
 		elsif tokens[p][1] = W_LT then
-			CMPI_sh("lt",p)
+			CMPI_mcore("<",p)
 			--ADD_CODE({"pop eax","xor ecx,ecx","cmp [esp],eax","setl cl","neg ecx","mov [esp],ecx"},0)
 		-- <=
 		elsif tokens[p][1] = W_LE then
-			CMPI_sh("le",p)
+			CMPI_mcore("<=",p)
 
 		-- 0=
 		elsif tokens[p][1] = W_EQ0 then
-			ADD_CODE({"mov #0,r1","cmp/eq #0,r0","negc r1,r0"},0)
+			ADD_CODE({"mov r2,r1","movi r1,0","cmpnei r2,0","decf r1"},0)
+			--ADD_CODE({"r1 = -1;","r2 = 0;","cc = r0==0;","if cc r0 = r1;","if !cc r0 = r2;"},0)
 		-- 0<>
 		elsif tokens[p][1] = W_NE0 then
-			ADD_CODE({"mov #0,r1","cmp/eq #0,r0","negc r1,r0","not r0,r0"},0)
+			ADD_CODE({"mov r2,r1","movi r1,0","cmpnei r2,0","dect r1"},0)
 		-- 0>
 		elsif tokens[p][1] = W_GT0 then
-		--	ADD_CODE({"pop eax","xor ecx,ecx","cmp eax,0","setg cl","neg ecx","mov [esp],ecx"},0)
 			ERROR("Unimplemented word",tokens[p])
 		-- 0<
 		elsif tokens[p][1] = W_LT0 then
-		--	ADD_CODE({"pop eax","xor ecx,ecx","cmp eax,0","setl cl","neg ecx","mov [esp],ecx"},0)
 			ERROR("Unimplemented word",tokens[p])
 
 
 		-- NEGATE
 		elsif tokens[p][1] = W_NEG then
-			ADD_CODE({"neg r0,r0"},0)
+			ADD_CODE({"rsubi r1,0"},0)
 			
 
 		-- ABS
 		elsif tokens[p][1] = W_ABS then
-			--ADD_CODE({"cmp.l #0,d0","slt d1","ext.w d1","ext.l d1","move.l d1,d2","eor.l d1,d0","and.l #1,d2","add.l d2,d0"},0)
+			ADD_CODE({"abs r1"},0)
 
 		-- ALLOT
 		elsif tokens[p][1] = W_ALLOT then
-			ADD_CODE({"add r0,r9","mov.l @r10+,r0"},0)
+			ADD_CODE({"addu r9,r1","ldw r1,(r10)","addi r10,4"},0)
 			
 		-- AND
 		elsif tokens[p][1] = W_AND then
-			ADD_CODE({"mov.l @r10+,r1","and r1,r0"},0)
+			ADD_CODE({"ldw r2,(r10)","and r1,r2","addi r10,4"},0)
 
 		-- BEGIN
 		elsif tokens[p][1] = W_BEGIN then
@@ -676,6 +585,7 @@ function compile_sh()
 				if length(tokens[p])=5 then
 					q = p+1
 					n = 1
+					usesI = 0
 					while tokens[q][1]!=W_LOOP and tokens[q][1]!=W_INCLOOP do
 						if tokens[q][1]=UNKNOWN then
 							if bsearch(tokens[q][2],userWords[1]) then
@@ -685,43 +595,79 @@ function compile_sh()
 								n = 0
 								exit
 							end if
+						elsif tokens[q][1] = W_I then
+							usesI = 1
 						elsif tokens[q][1]=W_DOT or tokens[q][1]=W_DOTSTRING or
 						      tokens[q][1]=W_EXPECT or tokens[q][1]=W_KEY then
 						      	n = 0
 						      	exit
 						end if
 						q += 1
+						if q>length(tokens) then
+							ERROR(ERROR_EOF,tokens[p])
+						end if
 					end while
 				end if
 			end if
 			
-			ADD_CODE({"mov.l r7,@-r12","mov.l r6,@-r12","mov.l @r10+,r7","mov r0,r6","mov.l @r10+,r0"},0)
-			ADD_CODE({s&":"},0)
+			if n then
+				--optI = 1
+				n = 0
+				if (not usesI) and p>2 and tokens[q][1]=W_LOOP then
+					if tokens[p-1][1]=NUMBER and tokens[p-2][1]=NUMBER then
+						-- Use hardware loop
+						n = 1
+						q = get_code_length()
+						PUSH_mcore(tokens[p-2][2]-tokens[p-1][2])
+						ADD_CODE({"mov r5,r1","ldw r1,(r10)","addi r10,4",s&":"},0)
+						if length(tokens[p-2])=4 then
+							REMOVE_CODE(tokens[p-2][4],q)
+						else
+							-- Shouldn't happen
+							ERROR("Internal error : Bad token",tokens[p-2])
+						end if
+					end if
+				end if
+			end if
+			if not n then
+				ADD_CODE({"p3 += -8;","[p3] = r6;","[p3 + 4] = r7;","r6 = r0;","r7 = [p1++];","r0 = [p1++];"},0)
+				--ADD_CODE({"mov.l r7,@-r12","mov.l r6,@-r12","mov.l @r10+,r7","mov r0,r6","mov.l @r10+,r0"},0)
+				usesI = 1
+				ADD_CODE({s&":"},0)
+			end if
+			
 
 		-- LOOP
 		elsif tokens[p][1] = W_LOOP then
-			if optI then
-				--ADD_CODE({"inc esi","cmp esi,edi","jne "&loopStack[length(loopStack)]},0)
-				optI = 0
+			if length(loopStack) then
+				if not usesI then
+					ADD_CODE({"decgt r5","bt "&loopStack[length(loopStack)]},0)
+					ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
+				else
+					if optI then
+						--ADD_CODE({"inc esi","cmp esi,edi","jne "&loopStack[length(loopStack)]},0)
+						optI = 0
+					else
+						ADD_CODE({"add #1,r6","cmp/eq r7,r6","bf "&loopStack[length(loopStack)]},0)				
+					end if
+					ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
+					ADD_CODE({"mov.l @r12+,r6","mov.l @r12+,r7"},0)
+				end if
+				if length(loopStack) = 1 then
+					loopStack = {}
+				else
+					loopStack = loopStack[1..length(loopStack)-1]
+				end if
 			else
-				--ADD_CODE({"add r6,r6,#1","cmp r6,r7","bne "&loopStack[length(loopStack)]},0)
-				ADD_CODE({"add #1,r6","cmp/eq r7,r6","bf "&loopStack[length(loopStack)]},0)				
+				ERROR(ERROR_NO_DO,tokens[p])
 			end if
-			ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
-			ADD_CODE({"mov.l @r12+,r6","mov.l @r12+,r7"},0)
-			if length(loopStack) = 1 then
-				loopStack = {}
-			else
-				loopStack = loopStack[1..length(loopStack)-1]
-			end if
-
+			
 		-- +LOOP
 		elsif tokens[p][1] = W_INCLOOP then
 			if optI then
 				--ADD_CODE({"pop eax","add esi,eax","cmp esi,edi","jne "&loopStack[length(loopStack)]},0)
 				optI = 0
 			else
-				--ADD_CODE({"mov eax,loopstackptr","pop ebx","sub eax,8","add [eax+4],ebx","mov ecx,[eax]","cmp [eax+4],ecx","jne "&loopStack[length(loopStack)]},0)
 				ADD_CODE({"add.l d0,d6","move.l (a2)+,d0","cmp d7,d6","bne "&loopStack[length(loopStack)]},0)
 			end if
 			ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
@@ -769,7 +715,7 @@ function compile_sh()
 		
 		-- ENDOF
 		elsif tokens[p][1] = W_ENDOF then
-			if case_ >= 0 then
+			if case_>=0 then
 				ADD_CODE({"bra "&caseLbl&"_end","nop"},0)
 				ADD_CODE({caseLbl&sprintf("_%04x_false:",case_)},0)
 				case_ += 1
@@ -800,9 +746,15 @@ function compile_sh()
 			if tokens[p+1][1] = W_CONST then
 				if length(tokens)>p+1 then
 					if not length(pendingWordDef) then
-						if tokens[p+2][1]=UNKNOWN and bsearch(tokens[p+2][2],constants[1])=0 then
+						--if tokens[p+2][1]=UNKNOWN and bsearch(tokens[p+2][2],constants[1])=0 then
+						if tokens[p+2][1]=UNKNOWN and get_symbol_tag(tokens[p+2][token_VALUE])=SYM_UNDEF then
+							set_symbol_tag(tokens[p+2][token_VALUE],SYM_CONST)
+						
 							s = sprintf("const_%07x",length(constants[1]))
 							n = length(maincode)
+							--if tokens[p-1][1]=NUMBER then
+							--	constants = assoc_insert(tokens[p+1][2],{s,0,n+1,tokens[p-1][2]},constants)
+							--else
 							q = add_literal(s)
 							r = add_literal(tokens[p+2][2])
 							constants = assoc_insert(tokens[p+2][2],{s,0,n+1,0,q,1},constants)
@@ -824,7 +776,12 @@ function compile_sh()
 		elsif tokens[p][1] = W_CONST then
 			if length(tokens)>p then
 				if not length(pendingWordDef) then
-					if tokens[p+1][1]=UNKNOWN and bsearch(tokens[p+1][2],constants[1])=0 then
+					--if tokens[p+1][1]=UNKNOWN and
+					--   not (bsearch(tokens[p+1][2],variables[1]) or
+					--	bsearch(tokens[p+1][2],constants[1]) or
+					--	bsearch(tokens[p+1][2],userWords[1])) then
+					if tokens[p+2][1]=UNKNOWN and get_symbol_tag(tokens[p+2][token_VALUE])=SYM_UNDEF then
+						set_symbol_tag(tokens[p+2][token_VALUE],SYM_CONST)
 						s = sprintf("const_%07x",length(constants[1]))
 						n = length(maincode)
 						if tokens[p-1][1]=NUMBER then
@@ -849,21 +806,31 @@ function compile_sh()
 		
 		-- VARIABLE
 		elsif tokens[p][1] = W_VAR then
-			if length(tokens)>p then
-				if tokens[p+1][1]=UNKNOWN and bsearch(tokens[p+1][2],variables[1])=0 then
-					s = sprintf("var_%07x",length(variables[1]))
-					q = add_literal(s)
-					variables = assoc_insert(tokens[p+1][2],{s,4,q},variables)
-					ADD_CODE({"mov.l "&literals[q][1]&",r1","mov.l r9,@r1","add #4,r9"},0)
-					p += 1
+			if not length(pendingWordDef) then
+				if length(tokens)>p then
+					--if tokens[p+1][1]=UNKNOWN and
+					--   not (bsearch(tokens[p+1][2],variables[1]) or
+					--	bsearch(tokens[p+1][2],constants[1]) or
+					--	bsearch(tokens[p+1][2],userWords[1])) then
+					if tokens[p+2][1]=UNKNOWN and get_symbol_tag(tokens[p+2][token_VALUE])=SYM_UNDEF then
+						set_symbol_tag(tokens[p+2][token_VALUE],SYM_VAR)
+						s = sprintf("var_%07x",length(variables[1]))
+						q = add_literal(s)
+						variables = assoc_insert(tokens[p+1][2],{s,4,q},variables)
+						--ADD_CODE({"ldr r1,="&s,"str r9,[r1]","add r9,r9,#4"},0)
+						ADD_CODE({"mov.l "&literals[q][1]&",r1","mov.l r9,@r1","add #4,r9"},0)
+						p += 1
+					else
+						ERROR(ERROR_REDECLARED,tokens[p+1])
+						p += 1
+					end if
 				else
-					ERROR(ERROR_REDECLARED,tokens[p+1])
-					p += 1
+					ERROR(ERROR_EOF,tokens[p])
 				end if
 			else
-				ERROR(ERROR_EOF,tokens[p])
+				ERROR(ERROR_VAR_INSIDE_WORD,tokens[p])
 			end if
-
+			
 		elsif tokens[p][1] = W_PUBLIC then
 			if length(tokens)>p then
 				if tokens[p+1][1]=UNKNOWN and bsearch(tokens[p+1][2],publics[1])=0 then
@@ -883,7 +850,7 @@ function compile_sh()
 
 		-- HERE
 		elsif tokens[p][1] = W_HERE then
-			ADD_CODE({"mov.l r0,@-r10","mov r9,r0"},0)
+			ADD_CODE({"p1 += -4;","[p1] = r0;","r0 = p0;"},0)
 		-- ,
 		elsif tokens[p][1] = W_COMMA then
 			ADD_CODE({"mov.l r0,@r9","add #4,r9","mov.l @r10+,r0"},0)
@@ -904,50 +871,55 @@ function compile_sh()
 			
 		-- DROP
 		elsif tokens[p][1] = W_DROP then
-			ADD_CODE({"mov.l @r10+,r0"},0)
+			ADD_CODE({"ldw r1,(r10)","addi r10,4"},0)
 
 		-- 2DROP
 		elsif tokens[p][1] = W_2DROP then
-			ADD_CODE({"add #4,r10","mov.l @r10+,r0"},0)
+			ADD_CODE({"p1 += 4;","r0 = [p1++];"},0)
 			
 		-- DUP
 		elsif tokens[p][1] = W_DUP then
-			ADD_CODE({"mov.l r0,@-r10"},0)
+			ADD_CODE({"subi r10,4","stw r1,(r10)"},0)
 		-- 2DUP
 		elsif tokens[p][1] = W_2DUP then
 			--ADD_CODE({"mov r2,r0","ldr r1,[r10]","stmfd r10!,{r1,r2}"},0)
 
 		-- PICK
 		elsif tokens[p][1] = W_PICK then
-			--ADD_CODE({"ldr r0,[r10,r0,lsl#2]"},0)
+			if tokens[p-1][1] = NUMBER then
+				ADD_CODE({sprintf("r0 = [p1 + %d];",tokens[p-1][2]*4)},0)
+			else
+				ADD_CODE({"p5 = r0;","p5 = p1 + (p5 << 2);","r0 = [p5];"},0)
+			end if
 			
 		-- NIP
 		elsif tokens[p][1] = W_NIP then
-			ADD_CODE({"add #4,r10"},0)
+			--ADD_CODE({"pop eax","pop ebx","push eax"},0)
+			ADD_CODE({"p1 += 4;"},0)
 			
 		-- TUCK
-		--elsif tokens[p][1] = W_TUCK then
+		elsif tokens[p][1] = W_TUCK then
 		--	ADD_CODE({"pop eax","pop ebx","push eax","push ebx","push eax"},0)
 		
 
 		-- OVER
 		elsif tokens[p][1] = W_OVER then
-			ADD_CODE({"mov.l @r10,r1","mov.l r0,@-r10","mov r1,r0"},0)
+			ADD_CODE({"r1 = [p1];","p1 += -4;","[p1] = r0;","r0 = r1;"},0)
 			
 		-- ELSE
 		elsif tokens[p][1] = W_ELSE then
 			if length(ifStack) and and_bits(length(ifStack),1)=0 then
-				ADD_CODE({"bra "&ifStack[2],"nop"},0)
+				ADD_CODE({"jump "&ifStack[2]&";"},0)
 				ADD_CODE({ifStack[1]&":"},0)
 				ifStack = ifStack[2..length(ifStack)]
 			else
-				ERROR("Unmatched ELSE",tokens[p])
+				ERROR(ERROR_NO_IF,tokens[p])
 			end if
 		
 		-- EXIT
 		elsif tokens[p][1] = W_EXIT then
 			if length(pendingWordDef) then
-				ADD_CODE({"bra "&wordId&"_return","nop"},0)
+				ADD_CODE({"jump "&wordId&"_return;"},0)
 			else
 				ERROR("Malplaced EXIT",tokens[p])
 			end if
@@ -985,20 +957,20 @@ function compile_sh()
 			ifStack = {s&"_false",s&"_true"}&ifStack
 			ifs += 1
 			if length(fastCmp) then
-				ADD_CODE({fastCmp&" "&ifStack[1]},0)
+				ADD_CODE({"if "&fastCmp&" jump "&ifStack[1]&";"},0)
 				fastCmp = ""
 			else
 				--ADD_CODE({"cmp r0,#-1","ldr r0,[r10],#4","bne "&ifStack[1]},0)
-				ADD_CODE({"mov r0,r1","mov.l @r10+,r0","cmp/pz r1","bt "&ifStack[1]},0)
+				ADD_CODE({"cc = r0==-1;","r0 = [p1++];","if !cc jump "&ifStack[1]&";"},0)
 			end if
 			
 		-- LEAVE
 		elsif tokens[p][1] = W_LEAVE then
-			ADD_CODE({"bra "&loopStack[length(loopStack)]&"_end","nop"},0)
+			ADD_CODE({"jump "&loopStack[length(loopStack)]&"_end"},0)
 		-- ?LEAVE
 		elsif tokens[p][1] = W_LEAVETRUE then
 			if length(fastCmp) then
-				ADD_CODE({fastCmp&" "&loopStack[length(loopStack)]&"_end"},0)
+				ADD_CODE({"if "&fastCmp&" jump "&loopStack[length(loopStack)]&"_end;"},0)
 				fastCmp = ""
 			else
 				ADD_CODE({"mov r0,r1","mov.l @r10+,r0","cmp/pz r1","bf "&loopStack[length(loopStack)]&"_end"},0)
@@ -1006,23 +978,23 @@ function compile_sh()
 			
 		-- NULL
 		elsif tokens[p][1] = W_NULL or tokens[p][1]=W_FALSE then
-			PUSH_sh(0)
+			PUSH_mcore(0)
 		-- TRUE
 		elsif tokens[p][1] = W_TRUE then
-			PUSH_sh(-1)
+			PUSH_mcore(-1)
 		-- BL
 		elsif tokens[p][1] = W_BL then
-			PUSH_sh(' ')
+			PUSH_mcore(' ')
 		
 		-- OR
 		elsif tokens[p][1] = W_OR then
-			ADD_CODE({"mov.l @r10+,r1","or r1,r0"},0)
+			ADD_CODE({"ldw r2,(r10)","or r1,r2","addi r10,4"},0)
 
 		-- REPEAT
 		elsif tokens[p][1] = W_REPEAT then
 			if length(loopStack) then
 			--puts(1,"repeat "&loopStack[length(loopStack)]&"\n")
-				ADD_CODE({"bra "&loopStack[length(loopStack)],"nop"},0)
+				ADD_CODE({"jump "&loopStack[length(loopStack)]&";"},0)
 				ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
 				if length(loopStack) = 1 then
 					loopStack = {}
@@ -1030,7 +1002,7 @@ function compile_sh()
 					loopStack = loopStack[1..length(loopStack)-1]
 				end if
 			else
-				ERROR(ERROR_NO_BEGIN,tokens[p])
+				ERROR("REPEAT with no matching BEGIN",tokens[p])
 			end if
 		-- ROT
 		elsif tokens[p][1] = W_ROT then
@@ -1039,7 +1011,7 @@ function compile_sh()
 
 		-- SWAP
 		elsif tokens[p][1] = W_SWAP then
-			ADD_CODE({"mov.l @r10,r1","mov.l r0,@r10","mov r1,r0"},0)
+			ADD_CODE({"ldw r2,(r10)","stw r1,(r10)","mov r1,r2"},0)
 			
 		-- THEN
 		elsif tokens[p][1] = W_THEN then
@@ -1060,7 +1032,7 @@ function compile_sh()
 			if not length(loopStack) then
 				ERROR(ERROR_NO_BEGIN,tokens[p])
 			else
-				ADD_CODE({"bra "&loopStack[length(loopStack)],"nop"},0)
+				ADD_CODE({"jump "&loopStack[length(loopStack)]&";"},0)
 				ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
 				if length(loopStack) = 1 then
 					loopStack = {}
@@ -1074,7 +1046,8 @@ function compile_sh()
 			if not length(loopStack) then
 				ERROR(ERROR_NO_BEGIN,tokens[p])
 			else
-				ADD_CODE({"mov r0,r1","mov.l @r10+,r0","cmp/pz r1","bt "&loopStack[length(loopStack)]},0)
+				--ADD_CODE({"mov r0,r1","mov.l @r10+,r0","cmp/pz r1","bt "&loopStack[length(loopStack)]},0)
+				ADD_CODE({"bmaski r2,32","cmpne r1,r2","ldw r1,(r10)","addi r10,4","bt "&loopStack[length(loopStack)]},0)
 				ADD_CODE({loopStack[length(loopStack)]&"_end:"},0)
 				if length(loopStack) = 1 then
 					loopStack = {}
@@ -1086,15 +1059,17 @@ function compile_sh()
 		-- WHILE
 		elsif tokens[p][1] = W_WHILE then
 			if length(fastCmp) then
-				ADD_CODE({fastCmp&" "&loopStack[length(loopStack)]&"_end"},0)
+				ADD_CODE({"if "&fastCmp&" jump "&loopStack[length(loopStack)]&"_end;"},0)
 				fastCmp = ""
 			else
-				ADD_CODE({"mov r0,r1","mov.l @r10+,r0","cmp/pz r1","bt "&loopStack[length(loopStack)]&"_end"},0)
+				--ADD_CODE({"mov r0,r1","mov.l @r10+,r0","cmp/pz r1","bt "&loopStack[length(loopStack)]&"_end"},0)
+				--ADD_CODE({"cc = r0==-1;","r0 = [p1++];","if !cc jump "&loopStack[length(loopStack)]&"_end;"},0)
+				ADD_CODE({"bmaski r2,32","cmpne r1,r2","ldw r1,(r10)","addi r10,4","bf "&loopStack[length(loopStack)]},0)
 			end if
 			
 		-- XOR
 		elsif tokens[p][1] = W_XOR then
-			ADD_CODE({"mov.l @r10+,r1","xor r1,r0"},0)
+			ADD_CODE({"r1 = [p1++];","r0 = r0 ^ r1;"},0)
 		
 		-- Z"
 		elsif tokens[p][1] = W_ZSTRING then
@@ -1118,7 +1093,8 @@ function compile_sh()
 					end if
 				end while
 				literals = append(literals,{sprintf("lit_%06x_%d",{length(literals)+globLit,length(pendingWordDef)}),".asciz \""&s&"\""})
-				ADD_CODE({"mov.l r0,@-r10","mova "&literals[length(literals)][1]&",r0"},0)
+				--ADD_CODE({"mov.l r0,@-r10","mova "&literals[length(literals)][1]&",r0"},0)
+				ADD_CODE({"p1 += -4;","[p1] = r0;","r0.h = "&literals[length(literals)][1]&";","r0.l = "&literals[length(literals)][1]&";"},0)
 			else
 				ERROR(ERROR_EOF,tokens[p])
 			end if
@@ -1129,7 +1105,7 @@ function compile_sh()
 				--s = sprintf("__ret_%04x",calls)
 				--calls += 1
 				--ADD_CODE({"lea "&s&",a6","bra "&userWords[2][n],s&":"},0)
-				ADD_CODE({"bsr "&userWords[2][n],"nop"},0)
+				ADD_CODE({"bsr "&userWords[2][n]},0)
 			end if
 			
 			if not n then
@@ -1160,7 +1136,8 @@ function compile_sh()
 						ADD_CODE({"mov.l r0,@-r10","mov.l #"&constants[2][n][1]&",r1","mov.l @r1,r0"},0)
 						constants[2][n][2] = 1	-- Mark the constant as being used
 					elsif length(constants[2][n])=4 then
-						PUSH_sh(constants[2][n][4])
+						tokens[p] &= get_code_length()+1
+						PUSH_mcore(constants[2][n][4])
 					elsif length(constants[2][n])=5 then
 						ADD_CODE({"mov.l r0,@-r10","mov.l "&literals[constants[2][n][5]][1]&",r1","mov.l @r1,r0"},0)
 						constants[2][n][2] = 1	-- Mark the constant as being used
@@ -1172,14 +1149,7 @@ function compile_sh()
 				end if
 			end if
 
-			--if not n then
-			--	n = bsearch(tokens[p][2],fconstants[1])
-			--	if n then
-			--		ADD_CODE({"fld qword ptr ["&fconstants[2][n]&"]"},0)
-			--		ADD_CODE({"mov eax,fpstackptr","fstp qword ptr [eax]","add fpstackptr,8"},0)
-			--	end if
-			--end if
-		
+
 			if not n then
 				n = bsearch(tokens[p][2],deferred[1])
 				if n then
@@ -1214,7 +1184,7 @@ end function
 
 
 
-global procedure forthec_sh()
+global procedure forthec_mcore()
 	sequence dkarmdir,mcpu,gccend,march
 	sequence asmOpts,linkOpts,crt0,lscript
 	integer nofiles
@@ -1231,7 +1201,7 @@ global procedure forthec_sh()
 	noFold = 0
 	globLit = 0
 	optLevel = 5
-	dkarmdir = "c:\\program\\kpit\\gnush\\sh-coff"
+	dkarmdir = "c:\\mcore-elf-binutils"
 	asmOpts = "" --"--register-prefix-optional --bitwise-or"	-- default
 	linkOpts = "-T lnkscript"
 	mcpu = "" 
@@ -1254,10 +1224,11 @@ global procedure forthec_sh()
 	end if
 	
 	if nofiles then
-		puts(1,"forthec -t sh [options] <infile> <outfile>\n\n")
+		puts(1,"forthec -t arm [options] <infile> <outfile>\n\n")
 		puts(1,"Options:\n\n")
 		puts(1,"-O<n>\t\tOptimisation level (n=0 min, n=6 max)\n")
 		puts(1,"-nm\t\tNo name mangling\n")
+		puts(1,"-ni\t\tDisable word inlining\n")
 		--puts(1,"-cpu <name>\tSpecify target cpu (m68000)\n")
 		--puts(1,"-arch <name>\tSpecify target architechture (armv4)\n")
 		--puts(1,"-eb\t\tBig-endian\n")
@@ -1281,6 +1252,9 @@ global procedure forthec_sh()
 	if find("-nm",CMD) then
 		noMangle = 1
 	end if
+	if find("-ni",CMD) then
+		allowInline = 0
+	end if
 	if find("-nf",CMD) then
 		noFold = 1
 	end if
@@ -1291,9 +1265,9 @@ global procedure forthec_sh()
 	if find("-el",CMD) then
 		gccend = "-EL"
 	end if
-	if find("-nofpu",CMD) then
-		nofpu = "-mno-fpu"
-	end if
+	--if find("-nofpu",CMD) then
+	--	nofpu = "-mno-fpu"
+	--end if
 
 	if find("-crt0",CMD) then
 		crt0 = CMD[find("-crt0",CMD)+1]
@@ -1304,10 +1278,10 @@ global procedure forthec_sh()
 	if find("-cpu",CMD) then
 		mcpu = "-"&CMD[find("-cpu",CMD)+1]
 	end if
-	if find("-arch",CMD) then
-		march = "-march="&CMD[find("-arch",CMD)+1]
-		mcpu = ""
-	end if
+	--if find("-arch",CMD) then
+	--	march = "-march="&CMD[find("-arch",CMD)+1]
+	--	mcpu = ""
+	--end if
 	if find("-entry",CMD) then
 		entrypoint = CMD[find("-entry",CMD)+1]
 	end if
@@ -1366,8 +1340,10 @@ global procedure forthec_sh()
 		cfgin = get(cfgfile)
 		cfgin = get(cfgfile)
 		cfgin = get(cfgfile)
+		cfgin = get(cfgfile)
+		cfgin = get(cfgfile)
 		if cfgin[1]=GET_SUCCESS then
-			if equal(cfgin[2][1],"SHGCC") then
+			if equal(cfgin[2][1],"MCGCC") then
 				dkarmdir = cfgin[2][2]
 			end if
 		end if
@@ -1379,13 +1355,12 @@ global procedure forthec_sh()
 	outname = cut_filename(outname)
 	outname[2] = lower(outname[2])
 
-
 	forthec_init()
 	
-	iwramStart = #06004000
-	iwramEnd   = #060FFFFF
-	ewramStart = #00200000
-	ewramEnd   = #002FFFFF
+	iwramStart = #03000000
+	iwramEnd   = #03007FFF
+	ewramStart = #02000000
+	ewramEnd   = #0203FFFF
 	
 
 	t1 = time()
@@ -1397,7 +1372,7 @@ global procedure forthec_sh()
 	
 	count_refs()
 	
-	if compile_sh() then end if
+	if compile_mcore() then end if
 
 	if errorCount then
 		printf(1,"Aborting with %d errors encountered\n",errorCount)
@@ -1408,17 +1383,18 @@ global procedure forthec_sh()
 
 	outfile = open(outname[1]&".asm","wb")
 	
+
 	if optLevel>0 then
 		if verbose then
 			puts(1,"Optimising\n")
 		end if
-		maincode = optimise_sh(maincode,1)
-		code = optimise_sh(code,0)
+		maincode = optimise_mcore(maincode,1)
+		code = optimise_mcore(code,0)
 	end if
 
 
-	puts(outfile,"! Generated by ForthEC"&NL&NL)
-	puts(outfile,NL&"!#############################################################################"&NL&NL)
+	puts(outfile,"# Generated by ForthEC"&NL&NL)
+	puts(outfile,NL&"##############################################################################"&NL&NL)
 
 
 	-- Check for unused constants and remove lines such as "mov const,imm"
@@ -1441,25 +1417,19 @@ global procedure forthec_sh()
 		end for
 	end for
 
-	--puts(outfile,".data"&NL)
 
+	-- Write constants
 	puts(outfile,".bss"&NL)
 	puts(outfile,".align 2"&NL)
-
 	for i=1 to length(constants[2]) do
 		if constants[2][i][2] or optLevel=0 then
-			----puts(outfile,"\t"&constants[2][i][1]&" dd ?"&NL)
-			--puts(outfile,"\t.global "&constants[2][i][1]&NL)
-			--puts(outfile,"\t.size "&constants[2][i][1]&",4"&NL)
 			puts(outfile,"\t"&constants[2][i][1]&":"&NL)
 			puts(outfile,"\t\t.long 0"&NL)
 		end if
 	end for
 
-	--for i=1 to length(fconstants[2]) do
-		--puts(outfile,"\t"&fconstants[2][i]&" dq ?"&NL)
-	--end for
 
+	-- Write variables
 	for i=1 to length(variables[2]) do
 		--if variables[2][i][2] = 4 then
 			--puts(outfile,"\t"&variables[2][i][1]&" dd ?"&NL)
@@ -1470,31 +1440,23 @@ global procedure forthec_sh()
 		--end if
 	end for
 
-	puts(outfile,NL&"!#############################################################################"&NL&NL)
+	puts(outfile,NL&"##############################################################################"&NL&NL)
 
 	-- Write code section
-	--puts(outfile,".code"&NL&"align 4"&NL&NL)
 	puts(outfile,".text"&NL&".globl "&fentry&NL&".align 2"&NL)
 
-	if usesDiv then
-		for i=1 to length(sdiv_code) do
-			puts(outfile,sdiv_code[i]&NL)
-		end for
-		puts(outfile,NL&"!#############################################################################"&NL&NL)
-	end if
-	
 	for i=1 to length(code) do
 		puts(outfile,code[i]&NL)
 	end for
 
-	puts(outfile,NL&"!#############################################################################"&NL&NL)
+	puts(outfile,NL&"##############################################################################"&NL&NL)
 
 	puts(outfile,fentry&":"&NL)
-	puts(outfile,   "mov.l _parm_stack_,r10"&NL&	-- parameter stack
-	                "mov.l _ret_stack_,r11"&NL&	-- return stack
-	                "mov.l _loop_stack_,r12"&NL&	-- loop stack
-	                "mov.l _dictionary_,r9"&NL	-- "dictionary"
-	                )
+	--puts(outfile,   "mov.l _parm_stack_,r10"&NL&	-- parameter stack
+	--                "mov.l _ret_stack_,r11"&NL&	-- return stack
+	--                "mov.l _loop_stack_,r12"&NL&	-- loop stack
+	--                "mov.l _dictionary_,r9"&NL	-- "dictionary"
+	--                )
 
 
 	for i=1 to length(maincode) do
@@ -1502,11 +1464,6 @@ global procedure forthec_sh()
 			puts(outfile,maincode[i]&NL)
 		end if
 	end for
-
-	puts(outfile, sprintf(".align 2"&{13,10}&"_parm_stack_: .long 0x%08x",iwramEnd+1)&NL)
-	puts(outfile, sprintf("_ret_stack_:  .long 0x%08x",iwramEnd+1-#1000)&NL)
-	puts(outfile, sprintf("_loop_stack_: .long 0x%08x",iwramEnd+1-#3000)&NL)
-	puts(outfile, sprintf("_dictionary_: .long 0x%08x",iwramEnd+1-#10000)&NL)
 
 
 	for i=1 to length(literals) do
@@ -1525,9 +1482,9 @@ global procedure forthec_sh()
 		if verbose then
 			puts(1,"\nAssembling\n")
 		end if
-		system(dkarmdir&"\\bin\\sh-coff-as "&mcpu&" "&asmOpts&" -o"&outname[1]&".o "&outname[1]&".asm",2)
-		system(dkarmdir&"\\bin\\sh-coff-ld -T "&lscript&" "&crt0&" "&outname[1]&".o"&morefiles,2)
-		system(dkarmdir&"\\bin\\sh-coff-objcopy -O binary a.out "&outname[1]&".bin",2)
+		system(dkarmdir&"\\bin\\mcore-elf-as "&mcpu&" "&asmOpts&" -o"&outname[1]&".o "&outname[1]&".asm",2)
+		system(dkarmdir&"\\bin\\mcore-elf-ld -T "&lscript&" "&crt0&" "&outname[1]&".o"&morefiles,2)
+		system(dkarmdir&"\\bin\\mcore-elf-objcopy -O binary a.out "&outname[1]&".bin",2)
 
 		system("del "&outname[1]&".asm",2)
 		system("del "&outname[1]&".o",2)
@@ -1537,7 +1494,7 @@ global procedure forthec_sh()
 		if verbose then
 			puts(1,"\nAssembling\n")
 		end if
-		system(dkarmdir&"\\bin\\sh-coff-as "&mcpu&" "&asmOpts&" -o"&outname[1]&".o "&outname[1]&".asm",2)
+		system(dkarmdir&"\\bin\\mcore-elf-as "&mcpu&" "&asmOpts&" -o"&outname[1]&".o "&outname[1]&".asm",2)
 	end if
 
 

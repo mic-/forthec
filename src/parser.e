@@ -1,12 +1,20 @@
 -- ForthEC parser
--- /Mic, 2004/2005
+-- /Mic, 2004/2009
 
 
 include file.e
 include get.e
 include machine.e
 include wildcard.e
+include lexseq.e
+include error.e
+include symtab.e
 
+
+global constant
+	token_TAG = 1,
+	token_VALUE = 2
+	
 
 global constant WORDS = 
 {
@@ -61,10 +69,15 @@ global constant WORDS =
 "2over",
 "32-bit",
 ":",
+--":i38",
+--":i66",
+":i",
 ":noname",
 ":w",
 ";",
 ";@",
+";i",
+";n",
 ";w",
 "<",
 "<<",
@@ -106,6 +119,8 @@ global constant WORDS =
 "branch",
 "bye",
 "c!",
+"c!l",
+"c!li",
 "c,",
 "c->l",		-- (n1 -- n2)		byte to long (unsigned)
 "c->w",		-- (n1 -- n2)		byte to word (unsigned)
@@ -113,6 +128,9 @@ global constant WORDS =
 "c:es@",
 "c@",
 "c@+",		-- (adr1 -- adr2 n)	
+"c@]i",
+"c@l",
+"c@li",
 "ca+",		
 "call",
 "calli",
@@ -274,6 +292,7 @@ global constant WORDS =
 "repeat",
 "rot",		-- (n1 n2 n3 -- n2 n3 n1)
 "s.",		-- (n --)
+"set-interrupt-handler",
 "sp!",
 "sp0",
 "sp@",
@@ -299,6 +318,7 @@ global constant WORDS =
 "value",
 "variable",
 "w!",
+"w!l",		-- (n adrhi adrlo -- )
 "w,",
 "w->l",		-- (n1 -- n2)	word to long (unsigned)
 "w:es!",
@@ -311,6 +331,8 @@ global constant WORDS =
 "wl@",
 "xor",		-- (n1 n2 -- n3)
 "z\"",
+"zpallot",
+"zpvariable",
 "{",
 "}"
 }
@@ -367,9 +389,17 @@ global constant
 	W_COLON		= keyword(":",0),
 	W_SEMICOLON	= keyword(";",0),
 	W_SEMICOLONPOP	= keyword(";@",0),
+	W_COLONIRQ	= keyword(":i",0),
 	W_COLONWIN	= keyword(":w",0),
 	W_SEMICOLONWIN	= keyword(";w",0),
 	W_COLONNO	= keyword(":noname",0),
+	--W_COLONI38	= keyword(":i38",0),
+	--W_COLONI66	= keyword(":i66",0),
+	W_SEMICOLONI	= keyword(";i",0),
+	W_SEMICOLONN	= keyword(";n",0),
+
+	W_SETINT	= keyword("set-interrupt-handler",0),
+	
 	W_QUOTE		= keyword("\'",0),
 	W_COMMA		= keyword(",",0),
 	W_CCOMMA	= keyword("c,",0),
@@ -387,6 +417,7 @@ global constant
 	
 	W_CONST		= keyword("constant",0),
 	W_VAR		= keyword("variable",0),
+	W_ZPVAR		= keyword("zpvariable", 0),
 	W_FCONST	= keyword("fconstant",0),
 	W_FVAR		= keyword("fvariable",0),
 	W_EXTERN	= keyword("extern",0),
@@ -397,9 +428,12 @@ global constant
 	
 	W_STORE		= keyword("!",0),
 	W_CSTORE	= keyword("c!",0),
+	W_CSTOREL	= keyword("c!l",0),
+	W_CSTORELI	= keyword("c!li",0),
 	W_FSTORE	= keyword("f!",0),
 	W_FSTORES	= keyword("f!s",0),
 	W_WSTORE	= keyword("w!",0),
+	W_WSTOREL	= keyword("w!l",0),
 	W_STORE_R	= keyword("!r",0),
 	W_STORE_R_INC	= keyword("!r+",0),
 	W_ERASE		= keyword("erase",0),
@@ -409,6 +443,10 @@ global constant
 	W_FETCH		= keyword("@",0),
 	W_FETCHADD	= keyword("@+",0),
 	W_CFETCH	= keyword("c@",0),
+	W_CFETCHADD	= keyword("c@+",0),
+	W_CFETCHL	= keyword("c@l", 0),
+	W_CFETCHLI	= keyword("c@li", 0),
+	W_CFETCHILI	= keyword("c@]i", 0),
 	W_SCFETCH	= keyword("<c@",0),
 	W_CSFETCH	= keyword("cs@",0),
 	W_WFETCH	= keyword("w@",0),
@@ -570,7 +608,8 @@ global constant
 	
 	W_ABS		= keyword("abs",0),
 
-	W_ALLOT		= keyword("allot",0),	
+	W_ALLOT		= keyword("allot",0),
+	W_ZPALLOT	= keyword("zpallot", 0),
 	W_ZSTRING	= keyword("z\"",0),
 	W_DOLLARSTRING	= keyword("$\"",0),
 
@@ -616,48 +655,9 @@ isString = 0
 verbose = 0
 
 
--- Do a binary search for 'look_for' in 'look_in'.
--- 'look_in' is assumed to be lexically ordered.
-global function bsearch(sequence look_for,sequence look_in)
-	integer lb,ub,middle,res
-	
-	lb = 0
-	ub = length(look_in)-1
-	
-	while 1 do
-		if ub<lb then
-			return 0
-		end if
-
-		middle = floor((lb+ub)/2)
-		
-		res = compare(look_for,look_in[middle+1])
-		if res=0 then
-			return middle+1
-		elsif res<0 then
-			ub = middle-1
-		else
-			lb = middle+1
-		end if
-	end while
-	return 0
-end function
 
 
---? bsearch("notouch",WORDS)
-
-global procedure ERROR(sequence msg,sequence token)
-	puts(1,"ERROR: "&msg)
-	if sequence(token[2]) then
-		puts(1,": "&token[2])
-	end if
-	printf(1," (line %d)\nPress any key to abort..",token[3])
-	while get_key()=-1 do end while
-	abort(0)
-end procedure
-
-
-
+-- Read a token from file fn
 function get_token(integer fn,integer line)
 	integer c,p,ttype,escaped
 	sequence token,token2,val
@@ -665,6 +665,7 @@ function get_token(integer fn,integer line)
 	token = {}
 	ttype = NUMBER
 	
+	-- Skip whitespace
 	if not isString then
 		c = ' '
 		while (c=' ' or c='\t' or c=13) do
@@ -681,17 +682,24 @@ function get_token(integer fn,integer line)
 	
 	while (isString and c!='\"') or
 	      ((not isString) and (not (c=' ' or c='\t' or c=13))) do
-		token &= c
+		token &= c	-- Add the read character to the token
 
-		if c=10 then
+		-- Exit on linefeed
+		if c=10 then	
 			exit
+
 		elsif c>='0' and c<='9' then
+
+		-- A '.' means either a floating point number or an ID (UNKNOWN)
 		elsif c='.' then
 			if ttype=NUMBER and length(token)>1 then
 				ttype = FNUMBER
 			else
 				ttype = UNKNOWN
 			end if
+
+		-- 'e'/'E' can occur in a hex number, a floating point number and
+		-- an ID (UNKNOWN)
 		elsif c='e' or c='E' then
 			if ttype=HEXNUMBER then
 				if c='e' then
@@ -700,14 +708,19 @@ function get_token(integer fn,integer line)
 			elsif ttype != FNUMBER and length(token)>1 then
 				ttype = UNKNOWN
 			end if
+		
+		-- 'x'/'X' can occur in a hex number and an ID (UNKNOWN)
 		elsif c='x' or c='X' and length(token)=2 and ttype=NUMBER then
-			if token[1]='0' then
+			if token[token_TAG]='0' then
 				ttype = HEXNUMBER
 			else
 				ttype = UNKNOWN
 			end if
+		
+		
 		elsif c='\'' then
 			ttype = ASCNUMBER
+		
 		
 		elsif c='-' then
 			if length(token)>1 then
@@ -725,12 +738,6 @@ function get_token(integer fn,integer line)
 				token[length(token)] -= ' '
 			elsif ttype=HEXNUMBER and (c>='A' and c<='F') then
 			else
-			--	if escaped and c='n' then
-			--		token[length(token)] = 13
-			--		token &= 10
-			--	elsif escaped and c='t' then
-			--		token[length(token)] = '\t'
-			--	end if
 				ttype = UNKNOWN
 			end if
 		end if
@@ -813,43 +820,46 @@ global function parse(sequence fname)
 	while 1 do
 		token =	get_token(fn,line)
 		
-		if token[1]=NOTHING then
+		if token[token_TAG]=NOTHING then
 			exit
-		elsif token[1]=NEWLINE then
+		elsif token[token_TAG]=NEWLINE then
 			if not touch then
 				tokens = append(tokens,token)
 			end if
 			line += 1
-		elsif token[1] = W_BEGINCOMMENT then		-- start of comment
-			while token[1]!=W_ENDCOMMENT and token[1]!=NOTHING do
+		elsif token[token_TAG] = W_BEGINCOMMENT then		-- start of comment
+			while token[token_TAG]!=W_ENDCOMMENT and token[token_TAG]!=NOTHING do
 				token = get_token(fn,line)
-				if token[1]=NEWLINE then
+				if token[token_TAG]=NEWLINE then
 					line += 1
 				end if
 			end while
-		elsif token[1] = W_SINGLECOMMENT then
-			while not (token[1]=NEWLINE or token[1]=NOTHING) do
+		elsif token[token_TAG] = W_SINGLECOMMENT then
+			while not (token[token_TAG]=NEWLINE or token[token_TAG]=NOTHING) do
 				token = get_token(fn,line)
 			end while
 			line += 1
-		elsif token[1]=W_ZSTRING or
-		      token[1]=W_DOTSTRING or
-		      token[1]=W_DOLLARSTRING then
+		elsif token[token_TAG]=W_ZSTRING or
+		      token[token_TAG]=W_DOTSTRING or
+		      token[token_TAG]=W_DOLLARSTRING then
 			tokens = append(tokens,token)
 			isString = 1
 			tokens = append(tokens,get_token(fn,line))
 			isString = 0
-		elsif token[1]=W_TOUCH then
+		elsif token[token_TAG]=W_TOUCH then
 			tokens = append(tokens,token)
 			touch = 1
-		elsif token[1]=W_NOTOUCH then
+		elsif token[token_TAG]=W_NOTOUCH then
 			tokens = append(tokens,token)
 			touch = 0
-		elsif token[1]=W_INCLUDE and touch then
+		elsif token[token_TAG]=W_INCLUDE and touch then
 			token = get_token(fn,line)
 			if parse(token[2]) then
 			end if
 		else
+			if token[token_TAG] = UNKNOWN then
+				install_symbol(token[token_VALUE],{SYM_UNDEF})
+			end if
 			tokens = append(tokens,token)
 		end if
 	end while
