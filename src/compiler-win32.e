@@ -1,5 +1,5 @@
 -- ForthEC : A Forth compiler
--- /Mic, 2004/2005
+-- /Mic, 2004/2024
 --
 -- 2005-04-10
 -- * Better support for DLL output target
@@ -310,9 +310,13 @@ function compile_win32()
 		-- c@
 		elsif tokens[p][1] = W_CFETCH then
 			ADD_CODE({"pop eax","movzx ebx,byte ptr [eax]","push ebx"},0)
+		-- c@+
+		elsif tokens[p][1] = W_CFETCHADD then
+			ADD_CODE({"mov eax,[esp]","movzx ebx,byte ptr [eax]","inc dword ptr [esp]","push ebx"},0)
 		-- cs@
 		elsif tokens[p][1] = W_CSFETCH then
 			ADD_CODE({"pop eax","movsx ebx,byte ptr [eax]","push ebx"},0)
+
 		-- w@
 		elsif tokens[p][1] = W_WFETCH then
 			ADD_CODE({"pop eax","movzx ebx,word ptr [eax]","push ebx"},0)
@@ -697,6 +701,10 @@ function compile_win32()
 			else
 				ADD_CODE({"mov eax,fpstackptr","xor ecx,ecx","fld qword ptr [eax-16]","sub esp,4","fcomip qword ptr [eax-8]","sub fpstackptr,8","setl cl","neg ecx","mov [esp],ecx"},0)
 			end if
+
+		-- NOT
+		elsif tokens[p][1] = W_NOT then
+			ADD_CODE({"not dword ptr [esp]"},0)
 			
 		-- NEGATE
 		elsif tokens[p][1] = W_NEG then
@@ -710,14 +718,26 @@ function compile_win32()
 				ADD_CODE({"mov eax,fpstackptr","fld qword ptr [eax-8]","fchs","fstp qword ptr [eax-8]"},0)
 			end if
 			
+		-- FIX
+		elsif tokens[p][1] = W_FIX then
+			if fastfloat then
+				ADD_CODE({"sub esp,4","frndint", "fistp dword ptr [esp]","fwait"},0)
+			else
+				ADD_CODE({"mov eax,fpstackptr","sub esp,4","fld qword ptr [eax-8]","sub fpstackptr,8","frndint", "fistp dword ptr [esp]"},0)
+			end if
+
 		-- FLOOR
 		elsif tokens[p][1] = W_FLOOR then
 			if fastfloat then
-				ADD_CODE({"sub esp,4","fistp dword ptr [esp]","fwait"},0)
+--				ADD_CODE({"sub esp,4","fistp dword ptr [esp]","fwait"},0)
+				ADD_CODE({"sub esp,4",
+				"fstcw word ptr scratch1", "fwait", "mov eax,scratch1","or eax,0C00h","mov scratch2,eax","fldcw word ptr scratch2",
+				"fistp dword ptr [esp]","fwait",
+				"fldcw word ptr scratch1"},0)
 			else
 				ADD_CODE({"mov eax,fpstackptr","sub esp,4","fld qword ptr [eax-8]","sub fpstackptr,8","fistp dword ptr [esp]"},0)
 			end if
-			
+
 		-- FLOAT
 		elsif tokens[p][1] = W_FLOAT then
 			if fastfloat then
@@ -740,6 +760,14 @@ function compile_win32()
 				ADD_CODE({"fcos"},0)
 			else
 				ADD_CODE({"mov eax,fpstackptr","fld qword ptr [eax-8]","fcos","fstp qword ptr [eax-8]"},0)
+			end if
+
+		-- FSQRT
+		elsif tokens[p][1] = W_FSQRT then
+			if fastfloat then
+				ADD_CODE({"fsqrt"},0)
+			else
+				ADD_CODE({"mov eax,fpstackptr","fld qword ptr [eax-8]","fsqrt","fstp qword ptr [eax-8]"},0)
 			end if
 			
 		-- ABS
@@ -1130,6 +1158,20 @@ function compile_win32()
 			else
 				ADD_CODE({"mov eax,fpstackptr","fld qword ptr [eax-8]","add fpstackptr,8","fstp qword ptr [eax]"},0)
 			end if
+
+		elsif tokens[p][1] = W_FOVER then
+			if fastfloat then
+				ADD_CODE({"fld st(1)"},0)
+			else
+				ADD_CODE({"mov eax,fpstackptr","fld qword ptr [eax-16]","add fpstackptr,8","fstp qword ptr [eax]"},0)
+			end if
+
+		elsif tokens[p][1] = W_FROT then
+			if fastfloat then
+				ADD_CODE({"fstp qword ptr scratch1", "fxch", "fld qword ptr scratch1", "fxch"},0)
+			else
+--				ADD_CODE({"mov eax,fpstackptr","fld qword ptr [eax-16]","add fpstackptr,8","fstp qword ptr [eax]"},0)
+			end if
 			
 		-- FDROP
 		elsif tokens[p][1] = W_FDROP then
@@ -1141,7 +1183,7 @@ function compile_win32()
 		-- FSWAP
 		elsif tokens[p][1] = W_FSWAP then
 			if fastfloat then
---				ADD_CODE({},0)
+				ADD_CODE({"fxch"},0)
 			else
 				ADD_CODE({"mov eax,fpstackptr","fld qword ptr [eax-8]",
 				          "fld qword ptr [eax-16]","fstp qword ptr [eax-8]","fstp qword ptr [eax-16]"},0)
@@ -1348,7 +1390,7 @@ function compile_win32()
 		
 		-- ROT
 		elsif tokens[p][1] = W_ROT then
-			ADD_CODE({"pop eax","pop ecx","pop edx","push ecx","push edx","push eax"},0)
+			ADD_CODE({"pop eax","pop ecx","pop edx","push ecx","push eax","push edx"},0)
 
 		-- SWAP
 		elsif tokens[p][1] = W_SWAP then
@@ -1777,14 +1819,14 @@ global procedure forthec_win32()
 		if verbose then
 			puts(1,"\nAssembling\n")
 		end if
-		system("ml /c /coff /I"&masmdir&"\\include /Fo"&outname[1]&".obj "&outname[1]&".asm",2)
+		system(masmdir&"\\bin\\ml /c /coff /I"&masmdir&"\\include /Fo"&outname[1]&".obj "&outname[1]&".asm",2)
 		if find("-res",CMD) then
 			system("rc "&outname[1]&".rc",2)
 			--system("cvtres "&outname[1]&".res",2)
 			system("link /SUBSYSTEM:"&subsystem&" /OPT:NOREF /LIBPATH:"&masmdir&"\\lib /OUT:"&outname[1]&".exe "&outname[1]&".obj "&outname[1]&".res",2)
 			system("del "&outname[1]&".res",2)
 		else
-			system("link /SUBSYSTEM:"&subsystem&" /OPT:NOREF /LIBPATH:"&masmdir&"\\lib /OUT:"&outname[1]&".exe "&outname[1]&".obj",2)
+			system(masmdir&"\\bin\\link /SUBSYSTEM:"&subsystem&" /OPT:NOREF /LIBPATH:"&masmdir&"\\lib /OUT:"&outname[1]&".exe "&outname[1]&".obj",2)
 		end if
 		system("del "&outname[1]&".asm",2)
 		system("del "&outname[1]&".obj",2)
@@ -1800,7 +1842,7 @@ global procedure forthec_win32()
 		if verbose then
 			puts(1,"\nAssembling\n")
 		end if
-		system("ml /c /coff /I"&masmdir&"\\include /Fo"&outname[1]&".obj "&outname[1]&".asm",2)
+		system(masmdir&"\\bin\\ml /c /coff /I"&masmdir&"\\include /Fo"&outname[1]&".obj "&outname[1]&".asm",2)
 	end if
 
 

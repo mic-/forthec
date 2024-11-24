@@ -1,5 +1,5 @@
 -- ForthEC parser
--- /Mic, 2004/2009
+-- /Mic, 2004/2024
 
 
 include file.e
@@ -206,7 +206,7 @@ global constant WORDS =
 "floor",
 "fnegate",
 "fopen",
-"fover",
+"fover",    -- (fp1 fp2 -- fp1 fp2 fp1)
 "fpop",		-- (fp -- l l)
 "fpops",	-- (fp -- l)
 "fpush",
@@ -516,6 +516,7 @@ global constant
 	W_FDROP		= keyword("fdrop",0),
 	W_FOVER		= keyword("fover",0),
 	W_FSWAP		= keyword("fswap",0),
+	W_FROT		= keyword("frot",0),
 
 	W_ADD		= keyword("+",0),
 	W_SUB		= keyword("-",0),
@@ -536,9 +537,11 @@ global constant
 
 	W_FSIN		= keyword("fsin",0),
 	W_FCOS		= keyword("fcos",0),
+	W_FSQRT		= keyword("fsqrt",0),
 
 	W_FLOAT		= keyword("float",0),
 	W_FLOOR		= keyword("floor",0),
+	W_FIX		= keyword("fix",0),
 	
 	W_MUL2		= keyword("2*",0),
 	W_DIV2		= keyword("2/",0),
